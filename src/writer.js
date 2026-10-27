@@ -9,6 +9,9 @@ const MAX_ATTEMPTS = 3;
 const MAX_CHARS = 500;
 const SIMILARITY_LIMIT = 0.6;
 const DEFAULT_MODEL = 'claude-opus-5-5';
+const MAX_TOKENS = 8000; // thinking の分も数えられるので小さいと本文が途中で切れる（iso-bot の中部経済新聞で 3000〜8000 で切れた実績）
+// 環境変数が空でも必ず止める語（会社名・本名・店名）。設定し忘れひとつで会社とのつながりが出ないように
+const DEFAULT_BANNED = ['ウッドデザインパーク', 'wooddesignpark', 'wood-designpark', 'WDP', 'セルフカフェ', 'selfcafe', '鈴木大基', 'カキダオレ'];
 const URL_RE = /(https?:\/\/|www\.)/i;
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
@@ -27,7 +30,7 @@ function pickType(recentTypes = [], date = new Date(), rng = Math.random) {
   return pool[Math.floor(rng() * pool.length)];
 }
 
-function norm(s) { return String(s || '').toLowerCase().replace(/\s+/g, ''); }
+function norm(s) { return String(s || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ''); } // 全角・半角の違い（ＷＤＰ・ｾﾙﾌ）も当てる
 
 function bigrams(s) {
   const t = norm(s);
@@ -46,7 +49,8 @@ function similarity(a, b) {
 }
 
 function parseBanned(env = {}) {
-  return String(env.THREADS_BANNED_WORDS || '').split(/[;,\n]/).map((s) => s.trim()).filter(Boolean);
+  const extra = String(env.THREADS_BANNED_WORDS || '').split(/[;,\n]/).map((s) => s.trim()).filter(Boolean);
+  return [...new Set([...DEFAULT_BANNED, ...extra])];
 }
 
 /** @returns {{ok:true}|{ok:false, reason:string}} */
@@ -100,14 +104,15 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic }) {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const res = await anthropic.messages.create({
       model,
-      max_tokens: 1024,
+      max_tokens: MAX_TOKENS,
       output_config: { effort: 'medium' },
       system: persona.SYSTEM,
       messages: [{ role: 'user', content: userPrompt({ type, recent, dateKey, reasons }) }],
     });
     const raw = (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
     const text = cleanOutput(raw);
-    const c = checkText(text, { banned, recent });
+    // 途中で切れた案（stop_reason=max_tokens）は空でなくても使わない
+    const c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : checkText(text, { banned, recent });
     if (c.ok) return { ok: true, text, type, attempts: attempt };
     lastReason = c.reason;
     reasons.push(c.reason);
@@ -116,4 +121,4 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic }) {
   return { ok: false, reason: lastReason, type };
 }
 
-module.exports = { pickType, checkText, writePost, similarity, parseBanned, TYPES, MAX_CHARS, DEFAULT_MODEL };
+module.exports = { pickType, checkText, writePost, similarity, parseBanned, TYPES, MAX_CHARS, DEFAULT_MODEL, DEFAULT_BANNED, MAX_TOKENS };

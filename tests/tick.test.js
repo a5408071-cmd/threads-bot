@@ -194,3 +194,28 @@ test('replies.poll が投げても tick は続き errors に残る', async () =>
   const r = await runTick(d);
   expect(r.errors).toEqual([expect.stringMatching(/reply boom/)]);
 });
+
+test('鍵の期限が切れている（か expiresAt が無い）なら鍵が無いのと同じ扱い＝投稿を試みず知らせる', async () => {
+  const d = deps();
+  await d.store.setToken({ ...TOKEN, expiresAt: '2026-10-01T00:00:00.000Z' });
+  const r = await runTick(d);
+  expect(r.ok).toBe(false);
+  expect(r.errors).toEqual([expect.stringMatching(/切れ/)]);
+  expect(d.threads.publishPost).not.toHaveBeenCalled();
+  expect(d.threads.refreshToken).not.toHaveBeenCalled();
+  expect(d.notify.owner.mock.calls[0][0]).toMatch(/oauth\/start/);
+  const d2 = deps();
+  await d2.store.setToken({ token: 'tk', userId: 'u1' });
+  const r2 = await runTick(d2);
+  expect(r2.ok).toBe(false);
+  expect(d2.threads.publishPost).not.toHaveBeenCalled();
+});
+
+test('猶予超えの枠がすでに claim 済み（投稿中に止まった）なら、その旨を知らせる', async () => {
+  const d = await withToken(deps({ now: at('11:00') }));
+  await d.store.ensureDay('2026-10-28', () => ({ slots: ['09:17', '20:41'] }));
+  await d.store.claimSlot('2026-10-28', 0);
+  const r = await runTick(d);
+  expect(r.skipped[0].reason).toMatch(/投稿中に止ま/);
+  expect(d.notify.owner.mock.calls[0][0]).toMatch(/Threads を確認/);
+});

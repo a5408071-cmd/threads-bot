@@ -63,3 +63,22 @@ test('writePost は前後の引用符や「投稿:」の見出しを剥がす', 
   expect(r.text).toBe('今日のベストショットは？');
   expect(a.messages.create.mock.calls[0][0].model).toBe('x');
 });
+
+test('writePost: stop_reason が max_tokens（途中で切れた）の案は使わず書き直させる', async () => {
+  let i = 0;
+  const outs = [{ text: '名古屋で平日ゴルフ行ける人', stop: 'max_tokens' }, { text: '名古屋で平日ゴルフ行ける人いませんか？', stop: 'end_turn' }];
+  const a = { messages: { create: jest.fn(async () => { const o = outs[i++]; return { content: [{ type: 'text', text: o.text }], stop_reason: o.stop }; }) } };
+  const r = await writePost({ type: 'question', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
+  expect(r).toMatchObject({ ok: true, attempts: 2, text: '名古屋で平日ゴルフ行ける人いませんか？' });
+  expect(JSON.stringify(a.messages.create.mock.calls[1][0])).toMatch(/途中で切れ/);
+  expect(a.messages.create.mock.calls[0][0].max_tokens).toBeGreaterThanOrEqual(8000);
+});
+
+test('NG 語は環境変数が空でも既定（会社名・本名）で止まり、全角・半角の違いも当てる', () => {
+  const { parseBanned, DEFAULT_BANNED } = require('../src/writer');
+  expect(DEFAULT_BANNED).toEqual(expect.arrayContaining(['ウッドデザインパーク', 'セルフカフェ', '鈴木大基']));
+  expect(parseBanned({})).toEqual(expect.arrayContaining(DEFAULT_BANNED));
+  expect(parseBanned({ THREADS_BANNED_WORDS: '追加語' })).toEqual(expect.arrayContaining([...DEFAULT_BANNED, '追加語']));
+  expect(checkText('ＷＤＰのゴルフ会', { banned: ['WDP'] }).ok).toBe(false);
+  expect(checkText('ｾﾙﾌｶﾌｪ行った', { banned: ['セルフカフェ'] }).ok).toBe(false);
+});

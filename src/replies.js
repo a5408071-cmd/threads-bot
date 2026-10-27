@@ -27,7 +27,7 @@ function createReplies({ threads, store, notify, now = () => new Date() }) {
       }
       for (const r of list) {
         if (!r || !r.id) continue;
-        if (r.from && String(r.from.id) === String(userId)) continue; // 自分の返信
+        if (r.is_reply_owned_by_me || (r.from && String(r.from.id) === String(userId))) continue; // 自分の返信（API の is_reply_owned_by_me）
         if (await store.seenReply(r.id)) continue;
         fresh.push({ ...r, post: p });
       }

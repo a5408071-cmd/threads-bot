@@ -90,3 +90,16 @@ test('listMyPosts には 7 日前の since を渡す', async () => {
   await replies.poll({ token: 'tk', userId: 'u1' });
   expect(threads.listMyPosts).toHaveBeenCalledWith({ token: 'tk', sinceIso: '2026-10-21T00:05:00.000Z' });
 });
+
+test('自分の返信は is_reply_owned_by_me でも除く（実際に頼んでいる fields の形）', async () => {
+  const store = memoryStore({ now: () => NOW });
+  await store.setConfig('repliesInitialized', { at: 'x' });
+  const { replies, notify } = mk({ store, posts: [P1], repliesByPost: { m1: [
+    { id: 'r9', text: '自分の返事', username: 'me', timestamp: 't', permalink: 'p', is_reply_owned_by_me: true },
+    { id: 'r10', text: '相手', username: 'bob', timestamp: 't', permalink: 'p', is_reply_owned_by_me: false },
+  ] } });
+  const r = await replies.poll({ token: 'tk', userId: 'u1' });
+  expect(r.newReplies).toBe(1);
+  expect(notify.owner.mock.calls[0][0]).toMatch(/@bob/);
+  expect(notify.owner.mock.calls[0][0]).not.toMatch(/自分の返事/);
+});

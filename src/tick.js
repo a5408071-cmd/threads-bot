@@ -33,10 +33,13 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
 
   // トークン
   let token = await store.getToken();
-  if (!token || !token.token) {
-    fail('Threads の鍵（トークン）が入っていない');
+  const expiredOrBroken = token && token.token && !(daysLeft(token.expiresAt, t) >= 0); // 期限切れ・expiresAt 無し（NaN）も鍵が無いのと同じ扱い
+  if (!token || !token.token || expiredOrBroken) {
+    const why = expiredOrBroken ? '切れている' : '入っていない';
+    fail(`Threads の鍵（トークン）が${why}`);
+    if (expiredOrBroken) token = null;
     if (await store.alertDue('token-missing', TOKEN_ALERT_HOURS)) {
-      await tell('⚠ Threads の鍵が入っていません。新しいアカウントでログインしたブラウザで threads-bot の /oauth/start を開いて接続してください（投稿は止まっています）');
+      await tell(`⚠ Threads の鍵が${why}ます。新しいアカウントでログインしたブラウザで threads-bot の /oauth/start を開いて接続し直してください（投稿は止まっています）`);
     }
   } else {
     const left = daysLeft(token.expiresAt, t);
@@ -84,9 +87,14 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
     const hm = day.slots[idx];
     const n = idx + 1;
     if (due.status === 'late') {
-      await store.markSkipped(dateKey, idx, `猶予超え（${hm} の枠、${grace} 分）`);
-      out.skipped.push({ index: idx, reason: `猶予超え（${hm} の枠）` });
-      await tell(`⚠ 今日の ${n} 本目（${hm}）は時間が過ぎていたので出しませんでした`);
+      // claim 済みのまま猶予を超えた＝投稿の途中で止まった（打ち切り・デプロイ）。出ているかもしれないので「確認して」と書き分ける
+      const wasClaimed = Array.isArray(day.claimed) && day.claimed.includes(idx);
+      const reason = wasClaimed ? `投稿中に止まった可能性（${hm} の枠。Threads を確認）` : `猶予超え（${hm} の枠、${grace} 分）`;
+      await store.markSkipped(dateKey, idx, reason);
+      out.skipped.push({ index: idx, reason });
+      await tell(wasClaimed
+        ? `⚠ 今日の ${n} 本目（${hm}）は投稿の途中で止まった可能性があります。出ているか Threads を確認してください`
+        : `⚠ 今日の ${n} 本目（${hm}）は時間が過ぎていたので出しませんでした`);
     } else if (await store.claimSlot(dateKey, idx)) {
       let w;
       try {

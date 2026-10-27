@@ -106,7 +106,7 @@ test('listMyPosts と listReplies は配列を返す', async () => {
   const t = createThreads({ http: h, env: {}, sleep: noSleep });
   expect(await t.listMyPosts({ token: 'tk', sinceIso: '2026-10-20T00:00:00Z' })).toEqual([{ id: 'm1', permalink: 'p1', timestamp: '2026-10-27T00:00:00+0000' }]);
   expect(h.calls[0].opts).toMatchObject({ fields: 'id,permalink,timestamp', since: '2026-10-20T00:00:00Z', access_token: 'tk' });
-  expect(await t.listReplies({ token: 'tk', mediaId: 'm1' })).toEqual([{ id: 'r1', text: 'hi', username: 'bob', timestamp: 't', permalink: 'pr' }]);
+  expect(await t.listReplies({ token: 'tk', mediaId: 'm1' })).toEqual([{ id: 'r1', text: 'hi', username: 'bob', timestamp: 't', permalink: 'pr', is_reply_owned_by_me: false }]);
 });
 
 test('authorizeUrl に 3 つの scope と state', () => {
@@ -118,4 +118,26 @@ test('authorizeUrl に 3 つの scope と state', () => {
   expect(u.searchParams.get('scope')).toBe('threads_basic,threads_content_publish,threads_read_replies');
   expect(u.searchParams.get('response_type')).toBe('code');
   expect(u.searchParams.get('state')).toBe('st');
+});
+
+test('listReplies は is_reply_owned_by_me も頼んで返す', async () => {
+  const h = http([{ match: /\/m1\/replies$/, reply: { data: [{ id: 'r1', text: 'hi', username: 'bob', timestamp: 't', permalink: 'pr', is_reply_owned_by_me: true }] } }]);
+  const t = createThreads({ http: h, env: {}, sleep: noSleep });
+  const r = await t.listReplies({ token: 'tk', mediaId: 'm1' });
+  expect(h.calls[0].opts.fields).toBe('id,text,username,timestamp,permalink,is_reply_owned_by_me');
+  expect(r[0].is_reply_owned_by_me).toBe(true);
+});
+
+test('トークン関係の道はバージョン無し（graph.threads.net/oauth/access_token 等。公式の例のとおり）', async () => {
+  const h = http([
+    { match: /\/oauth\/access_token$/, reply: { access_token: 'short', user_id: 'u1' } },
+    { match: /\/access_token$/, reply: { access_token: 'long', expires_in: 5184000 } },
+    { match: /\/refresh_access_token$/, reply: { access_token: 'long2', expires_in: 5184000 } },
+  ]);
+  const t = createThreads({ http: h, env: { THREADS_APP_ID: 'app', THREADS_APP_SECRET: 'sec' }, sleep: noSleep });
+  await t.exchangeCode({ code: 'cd', redirectUri: 'https://x/cb' });
+  await t.refreshToken('long');
+  expect(h.calls[0].url).toBe('https://graph.threads.net/oauth/access_token');
+  expect(h.calls[1].url).toBe('https://graph.threads.net/access_token');
+  expect(h.calls[2].url).toBe('https://graph.threads.net/refresh_access_token');
 });

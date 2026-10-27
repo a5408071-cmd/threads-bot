@@ -4,7 +4,8 @@
  * 写真の image_url は誰でも開ける URL が必須（Meta が取りに来る）。
  * 公式: https://developers.facebook.com/docs/threads
  */
-const BASE = 'https://graph.threads.net/v1.0';
+const ROOT = 'https://graph.threads.net';
+const BASE = `${ROOT}/v1.0`;
 const AUTHORIZE = 'https://threads.net/oauth/authorize';
 const SCOPES = ['threads_basic', 'threads_content_publish', 'threads_read_replies'];
 const STATUS_POLL_MS = 5000;
@@ -20,6 +21,9 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
 
   const post = async (path, params) => (await client.post(`${BASE}${path}`, null, { params })).data;
   const get = async (path, params) => (await client.get(`${BASE}${path}`, { params })).data;
+  // トークン関係だけは公式の例どおりバージョン無し（graph.threads.net/oauth/access_token など）
+  const postRoot = async (path, params) => (await client.post(`${ROOT}${path}`, null, { params })).data;
+  const getRoot = async (path, params) => (await client.get(`${ROOT}${path}`, { params })).data;
 
   const expiresAtFrom = (expiresIn) => new Date(now().getTime() + Number(expiresIn || 0) * 1000).toISOString();
 
@@ -68,16 +72,16 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
 
   /** code → 短期トークン → 長期トークン（60日） */
   async function exchangeCode({ code, redirectUri }) {
-    const short = await post('/oauth/access_token', {
+    const short = await postRoot('/oauth/access_token', {
       client_id: env.THREADS_APP_ID, client_secret: env.THREADS_APP_SECRET,
       grant_type: 'authorization_code', redirect_uri: redirectUri, code,
     });
-    const long = await get('/access_token', { grant_type: 'th_exchange_token', client_secret: env.THREADS_APP_SECRET, access_token: short.access_token });
+    const long = await getRoot('/access_token', { grant_type: 'th_exchange_token', client_secret: env.THREADS_APP_SECRET, access_token: short.access_token });
     return { token: long.access_token, userId: String(short.user_id), expiresAt: expiresAtFrom(long.expires_in) };
   }
 
   async function refreshToken(token) {
-    const r = await get('/refresh_access_token', { grant_type: 'th_refresh_token', access_token: token });
+    const r = await getRoot('/refresh_access_token', { grant_type: 'th_refresh_token', access_token: token });
     return { token: r.access_token, expiresAt: expiresAtFrom(r.expires_in) };
   }
 
@@ -89,8 +93,8 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
   }
 
   async function listReplies({ token, mediaId }) {
-    const r = await get(`/${mediaId}/replies`, { fields: 'id,text,username,timestamp,permalink', access_token: token });
-    return (r.data || []).map((x) => ({ id: x.id, text: x.text, username: x.username, timestamp: x.timestamp, permalink: x.permalink }));
+    const r = await get(`/${mediaId}/replies`, { fields: 'id,text,username,timestamp,permalink,is_reply_owned_by_me', access_token: token });
+    return (r.data || []).map((x) => ({ id: x.id, text: x.text, username: x.username, timestamp: x.timestamp, permalink: x.permalink, is_reply_owned_by_me: Boolean(x.is_reply_owned_by_me) }));
   }
 
   function authorizeUrl({ redirectUri, state }) {

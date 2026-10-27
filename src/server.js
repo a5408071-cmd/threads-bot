@@ -30,7 +30,8 @@ function createApp(deps = {}) {
   const now = deps.now || (() => new Date());
   let anthropic = deps.anthropic || null;
   const getAnthropic = () => {
-    if (!anthropic) { const Anthropic = require('@anthropic-ai/sdk'); anthropic = new Anthropic({ maxRetries: 4 }); }
+    // 1 回の見回りを Cloud Run の 300 秒・Scheduler の期限に収める（書き直し 3 回＋status 待ち 60 秒でも超えない）
+    if (!anthropic) { const Anthropic = require('@anthropic-ai/sdk'); anthropic = new Anthropic({ maxRetries: 2, timeout: 60000 }); }
     return anthropic;
   };
   let notify = deps.notify || null;
