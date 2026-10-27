@@ -66,3 +66,33 @@ describe('OAuth（社長のブラウザで Threads と接続）', () => {
     expect(await store.getToken()).toBeNull();
   });
 });
+
+describe('/cron/tick と /admin/status の配線', () => {
+  const { memoryStore } = require('../src/store');
+  test('/cron/tick は runTick の結果を返し、errors があれば 500', async () => {
+    const store = memoryStore();
+    const tick = { runTick: jest.fn(async ({ mode }) => ({ ok: mode !== 'live', errors: mode === 'live' ? ['x'] : [], mode })) };
+    const app = createApp({ env: { CRON_KEY: 'k' }, store, tick, threads: {}, writer: {}, notify: {}, anthropic: {} });
+    const r1 = await request(app).get('/cron/tick?key=k&dry=1').expect(200);
+    expect(r1.body).toMatchObject({ ok: true, mode: 'dry' });
+    const r2 = await request(app).get('/cron/tick?key=k&test=1').expect(200);
+    expect(r2.body.mode).toBe('test');
+    const r3 = await request(app).get('/cron/tick?key=k').expect(500);
+    expect(r3.body).toMatchObject({ ok: false, errors: ['x'], mode: 'live' });
+  });
+
+  test('/admin/status は今日の枠・トークンの残り・直近の投稿を返す（鍵そのものは返さない）', async () => {
+    const store = memoryStore({ now: () => new Date('2026-10-28T00:20:00+09:00') });
+    await store.ensureDay('2026-10-28', () => ({ slots: ['09:17', '20:41'] }));
+    await store.setToken({ token: 'SECRET', userId: 'u1', expiresAt: '2026-12-20T00:00:00.000Z' });
+    await store.savePost({ mediaId: 'm1', text: 't', type: 'hook', source: 'auto', permalink: 'p' });
+    const app = createApp({ env: { CRON_KEY: 'k' }, store, now: () => new Date('2026-10-28T00:20:00+09:00') });
+    await request(app).get('/admin/status').expect(403);
+    const r = await request(app).get('/admin/status?key=k').expect(200);
+    expect(r.body.today).toMatchObject({ dateKey: '2026-10-28', slots: ['09:17', '20:41'] });
+    expect(r.body.token).toEqual({ userId: 'u1', expiresAt: '2026-12-20T00:00:00.000Z', daysLeft: 53 });
+    expect(JSON.stringify(r.body)).not.toMatch(/SECRET/);
+    expect(r.body.lastPosts).toEqual([expect.objectContaining({ mediaId: 'm1' })]);
+    expect(r.body.enabled).toBe(true);
+  });
+});

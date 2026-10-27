@@ -1,7 +1,8 @@
 /**
  * threads-bot の HTTP 入口。
  *   GET  /healthz        … 生存確認
- *   GET  /cron/tick      … 10分おきの見回り（X-Cron-Key か ?key=）
+ *   GET  /cron/tick      … 10分おきの見回り（X-Cron-Key か ?key=）。?dry=1 は文を返すだけ、?test=1 は文を社長DMへ（投稿しない）
+ *   GET  /admin/status   … 今日の枠・トークンの残り日数・直近の投稿（鍵そのものは返さない）
  *   GET  /oauth/start    … 社長が新垢でログインしたブラウザで開く（?key=）→ Threads の許可画面へ
  *   GET  /oauth/callback … Threads から戻る。code をトークンに換えて Firestore に保存
  * 外部（Firestore・Anthropic・Threads・iso-bot）は deps で差し替えられる（テストは本物につながない）。
@@ -25,6 +26,21 @@ function createApp(deps = {}) {
     if (!threads) threads = require('./threads').createThreads({ env });
     return threads;
   };
+  const now = deps.now || (() => new Date());
+  let anthropic = deps.anthropic || null;
+  const getAnthropic = () => {
+    if (!anthropic) { const Anthropic = require('@anthropic-ai/sdk'); anthropic = new Anthropic({ maxRetries: 4 }); }
+    return anthropic;
+  };
+  let notify = deps.notify || null;
+  const getNotify = () => { if (!notify) notify = require('./notify').createNotify({ env }); return notify; };
+  let replies = deps.replies === undefined ? null : deps.replies;
+  const getReplies = () => {
+    if (replies === null && deps.replies === undefined) {
+      try { replies = require('./replies').createReplies({ threads: getThreads(), store: getStore(), notify: getNotify(), now }); } catch (e) { replies = null; }
+    }
+    return replies;
+  };
   const redirectUri = () => `${String(env.PUBLIC_BASE_URL || '').replace(/\/+$/, '')}/oauth/callback`;
   const app = express();
   app.disable('x-powered-by');
@@ -41,8 +57,38 @@ function createApp(deps = {}) {
 
   app.get('/cron/tick', async (req, res) => {
     if (!gate(req, res)) return;
-    if (env.THREADS_ENABLED === 'false') return res.json({ ok: true, disabled: true });
-    res.json({ ok: true });
+    const mode = req.query.dry === '1' ? 'dry' : req.query.test === '1' ? 'test' : 'live';
+    if (env.THREADS_ENABLED === 'false') return res.json({ ok: true, disabled: true, mode }); // 緊急停止。Firestore にもつながない
+    try {
+      const tick = deps.tick || require('./tick');
+      const r = await tick.runTick({ env, store: getStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: getNotify(), anthropic: getAnthropic(), now, mode, replies: getReplies() });
+      const errs = (r && r.errors) || [];
+      if (errs.length) console.error(`[threads] TICK_ERRORS ${errs.join(' | ')}`);
+      res.status(errs.length ? 500 : 200).json(r);
+    } catch (e) {
+      console.error('[threads] TICK_ERROR:', e);
+      res.status(500).json({ ok: false, mode, errors: [e.message] });
+    }
+  });
+
+  app.get('/admin/status', async (req, res) => {
+    if (!gate(req, res)) return;
+    try {
+      const store = getStore();
+      const { jstDateKey } = require('./slots');
+      const { daysLeft } = require('./tick');
+      const t = now();
+      const tok = await store.getToken();
+      res.json({
+        today: await store.getDay(jstDateKey(t)),
+        token: tok ? { userId: tok.userId, expiresAt: tok.expiresAt, daysLeft: daysLeft(tok.expiresAt, t) } : null,
+        lastPosts: await store.recentPosts(5),
+        enabled: env.THREADS_ENABLED !== 'false',
+        autoPost: env.THREADS_AUTO_POST !== 'false',
+      });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
   });
 
   // OAuth: 社長が「新垢でログインしたブラウザ」で /oauth/start?key=… を開く → Threads の許可画面 → /oauth/callback にトークンが入る。
