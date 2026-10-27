@@ -257,3 +257,17 @@ test('写真: forcePhoto なら shouldAttach に関係なく pick する（dry/t
   expect(d.photos.pick).toHaveBeenCalled();
   expect(r.preview.photo).toBe('a.jpg');
 });
+
+test('forcePost: 枠に関係なく今すぐ 1 本書いて投稿する（枠は消費しない。記録と写しは通常どおり）', async () => {
+  const d = await withToken(deps({ now: at('15:00') }));
+  const photo = { id: 'P1', name: 'course.jpg', url: 'u', mediaType: 'image/jpeg', bytes: Buffer.from('x') };
+  d.photos = { shouldAttach: () => false, pick: jest.fn(async () => photo) };
+  const r = await runTick({ ...d, forcePost: true, forcePhoto: true });
+  expect(r.posted).toEqual([expect.objectContaining({ manual: true, mediaId: 'm1', photo: 'course.jpg' })]);
+  expect(d.threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ imageUrl: 'u' }));
+  const day = await d.store.getDay('2026-10-28');
+  expect(day.posted).toEqual([]);
+  expect(day.claimed).toEqual([]);
+  expect((await d.store.recentPosts(1))[0]).toMatchObject({ source: 'auto', photoId: 'P1' });
+  expect(d.notify.owner.mock.calls[0][0]).toMatch(/投稿しました/);
+});

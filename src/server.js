@@ -68,7 +68,7 @@ function createApp(deps = {}) {
     if (env.THREADS_ENABLED === 'false') return res.json({ ok: true, disabled: true, mode }); // 緊急停止。Firestore にもつながない
     try {
       const tick = deps.tick || require('./tick');
-      const r = await tick.runTick({ env, store: getStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: getNotify(), anthropic: getAnthropic(), now, mode, replies: getReplies(), photos: getPhotos(), forcePhoto: mode !== 'live' && req.query.photo === '1' });
+      const r = await tick.runTick({ env, store: getStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: getNotify(), anthropic: getAnthropic(), now, mode, replies: getReplies(), photos: getPhotos(), forcePhoto: req.query.photo === '1', forcePost: mode === 'live' && req.query.post === '1' });
       const errs = (r && r.errors) || [];
       if (errs.length) console.error(`[threads] TICK_ERRORS ${errs.join(' | ')}`);
       res.status(errs.length ? 500 : 200).json(r);
