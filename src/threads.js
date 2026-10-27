@@ -97,6 +97,19 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
     return (r.data || []).map((x) => ({ id: x.id, text: x.text, username: x.username, timestamp: x.timestamp, permalink: x.permalink, is_reply_owned_by_me: Boolean(x.is_reply_owned_by_me) }));
   }
 
+  /** 鍵の持ち主と権限（診断用。鍵そのものは返さない） */
+  async function whoAmI(token) {
+    const me = await get('/me', { fields: 'id,username', access_token: token });
+    let scopes = null; let appId = null;
+    try {
+      const d = await getRoot('/debug_token', { input_token: token, access_token: `${env.THREADS_APP_ID}|${env.THREADS_APP_SECRET}` });
+      scopes = (d.data && d.data.scopes) || null; appId = (d.data && d.data.app_id) || null;
+    } catch (e) {
+      console.warn(`[threads] DEBUG_TOKEN_FAILED ${metaError(e)}`);
+    }
+    return { id: me.id, username: me.username, scopes, appId };
+  }
+
   function authorizeUrl({ redirectUri, state }) {
     const u = new URL(AUTHORIZE);
     u.searchParams.set('client_id', env.THREADS_APP_ID || '');
@@ -107,7 +120,7 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
     return u.toString();
   }
 
-  return { publishPost, exchangeCode, refreshToken, listMyPosts, listReplies, authorizeUrl };
+  return { publishPost, exchangeCode, refreshToken, listMyPosts, listReplies, authorizeUrl, whoAmI };
 }
 
 module.exports = { createThreads, BASE, SCOPES, metaError };

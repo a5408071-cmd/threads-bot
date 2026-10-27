@@ -136,6 +136,19 @@ function createApp(deps = {}) {
     }
   });
 
+  // 鍵の持ち主と権限（投稿が「Object does not exist / missing permissions」で断られたときの診断。鍵そのものは返さない）
+  app.get('/admin/whoami', async (req, res) => {
+    if (!gate(req, res)) return;
+    try {
+      const tok = await getStore().getToken();
+      if (!tok || !tok.token) return res.status(503).json({ ok: false, error: '鍵なし' });
+      const r = await getThreads().whoAmI(tok.token);
+      res.json({ ok: true, storedUserId: tok.userId, ...r });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: require('./threads').metaError(e) });
+    }
+  });
+
   app.get('/admin/status', async (req, res) => {
     if (!gate(req, res)) return;
     try {

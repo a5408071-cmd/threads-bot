@@ -141,3 +141,14 @@ test('トークン関係の道はバージョン無し（graph.threads.net/oauth
   expect(h.calls[1].url).toBe('https://graph.threads.net/access_token');
   expect(h.calls[2].url).toBe('https://graph.threads.net/refresh_access_token');
 });
+
+test('whoAmI は /me と /debug_token で鍵の持ち主と権限を返す（鍵そのものは返さない）', async () => {
+  const h = http([
+    { match: /\/me$/, reply: { id: 'u1', username: 'tete' } },
+    { match: /\/debug_token$/, reply: { data: { app_id: 'app', scopes: ['threads_basic', 'threads_content_publish'], expires_at: 1 } } },
+  ]);
+  const t = createThreads({ http: h, env: { THREADS_APP_ID: 'app', THREADS_APP_SECRET: 'sec' }, sleep: noSleep });
+  const r = await t.whoAmI('tk');
+  expect(r).toEqual({ id: 'u1', username: 'tete', scopes: ['threads_basic', 'threads_content_publish'], appId: 'app' });
+  expect(JSON.stringify(r)).not.toMatch(/tk/);
+});
