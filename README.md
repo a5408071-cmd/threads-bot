@@ -15,7 +15,7 @@ Cloud Run（サービス名 `threads-bot`、asia-northeast1、プロジェクト
 ## 写真
 
 本物の写真を Drive の **イソ保管庫/共通/Threads写真/**（`THREADS_PHOTO_FOLDER_ID`）にためておくと、投稿の半分くらい（`THREADS_PHOTO_RATE` 既定 0.5）にランダムで 1 枚付ける。同じ写真は 60 日あける。
-AI は写真を見て写っているものに合う文を書く（いつ・どこで撮ったかは断定しない）。フォルダは Cloud Run のサービスアカウントに閲覧者で共有してある。公開 URL は iso-bot の `/media/drive/<ID>.jpg?sig=…`（GBP と同じ）。
+AI は写真を見て写っているものに合う文を書く（いつ・どこで撮ったかは断定しない）。フォルダは Cloud Run のサービスアカウントに閲覧者で共有してある。iPhone の HEIC は heic-convert で JPEG に直し、長辺 2000px に縮めて自分の `/media/photo/<ID>.jpg?sig=…` で公開する（Meta が取りに来る）。
 写真が取れなければ写真なしで投稿する。`/cron/tick?dry=1&photo=1` で写真付きの文を確かめられる。
 
 ## 入口

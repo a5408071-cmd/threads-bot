@@ -96,3 +96,16 @@ describe('/cron/tick と /admin/status の配線', () => {
     expect(r.body.enabled).toBe(true);
   });
 });
+
+describe('GET /media/photo/:id.jpg（Meta が写真を取りに来る口）', () => {
+  test('署名が合えば JPEG、違えば 403、無ければ 404', async () => {
+    const photos = { serve: jest.fn(async (id, sig) => (id === 'PHOTOID1234567890' && sig === 'good' ? Buffer.from('jpegdata') : null)) };
+    const app = createApp({ env: { CRON_KEY: 'k' }, photos });
+    const r = await request(app).get('/media/photo/PHOTOID1234567890.jpg?sig=good').expect(200);
+    expect(r.headers['content-type']).toMatch(/image\/jpeg/);
+    expect(r.body.toString()).toBe('jpegdata');
+    await request(app).get('/media/photo/PHOTOID1234567890.jpg?sig=bad').expect(404);
+    await request(app).get('/media/photo/PHOTOID1234567890.jpg').expect(403);
+    await request(app).get('/media/photo/%2F..%2Fetc.jpg?sig=good').expect(403);
+  });
+});

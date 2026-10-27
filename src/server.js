@@ -120,6 +120,22 @@ function createApp(deps = {}) {
     }
   });
 
+  // Meta が投稿の写真を取りに来る口（署名付き。Drive の写真を JPEG に直して返す。HEIC も可）
+  app.get('/media/photo/:file', async (req, res) => {
+    const id = String(req.params.file || '').replace(/\.jpe?g$/i, '');
+    const sig = String(req.query.sig || '');
+    if (!/^[\w-]{10,}$/.test(id) || !sig) return res.sendStatus(403);
+    try {
+      const ph = getPhotos();
+      const bytes = ph && (await ph.serve(id, sig));
+      if (!bytes) return res.sendStatus(404);
+      res.set('Content-Type', 'image/jpeg').set('Cache-Control', 'public, max-age=3600').send(bytes);
+    } catch (e) {
+      console.error('[threads] MEDIA_PHOTO_ERROR:', e.message);
+      res.sendStatus(502);
+    }
+  });
+
   app.get('/admin/status', async (req, res) => {
     if (!gate(req, res)) return;
     try {
