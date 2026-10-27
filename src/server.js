@@ -2,6 +2,7 @@
  * threads-bot の HTTP 入口。
  *   GET  /healthz        … 生存確認
  *   GET  /cron/tick      … 10分おきの見回り（X-Cron-Key か ?key=）。?dry=1 は文を返すだけ、?test=1 は文を社長DMへ（投稿しない）
+ *   POST /api/post       … イソからの投稿（X-Cron-Key。JSON {text, imageUrl?, source?, preview?, force?}）
  *   GET  /admin/status   … 今日の枠・トークンの残り日数・直近の投稿（鍵そのものは返さない）
  *   GET  /oauth/start    … 社長が新垢でログインしたブラウザで開く（?key=）→ Threads の許可画面へ
  *   GET  /oauth/callback … Threads から戻る。code をトークンに換えて Firestore に保存
@@ -68,6 +69,48 @@ function createApp(deps = {}) {
     } catch (e) {
       console.error('[threads] TICK_ERROR:', e);
       res.status(500).json({ ok: false, mode, errors: [e.message] });
+    }
+  });
+
+  // イソ経由の投稿（社長が写真を渡して「Threads に投稿しといて」）。設計書 §7。
+  // 本文は社長の言葉をそのまま（AI は通さない）。NG 語は止めるが、社長が「それでも出して」なら force=true で通す。
+  // preview=true は投稿せず本文と検査結果だけ返す（イソが社長に見せて OK をもらうため）。投稿枠（threads_days）は消費しない
+  app.post('/api/post', async (req, res) => {
+    if (!gate(req, res)) return;
+    if (env.THREADS_ENABLED === 'false') return res.status(503).json({ ok: false, error: '停止中（THREADS_ENABLED=false）' });
+    const body = (req.body && typeof req.body === 'object') ? req.body : {};
+    const text = String(body.text || '').trim();
+    const imageUrl = body.imageUrl ? String(body.imageUrl).trim() : null;
+    const source = String(body.source || 'iso');
+    if (!text) return res.status(400).json({ ok: false, error: '本文（text）が空です' });
+    if (imageUrl && !/^https:\/\//.test(imageUrl)) return res.status(400).json({ ok: false, error: 'imageUrl は https:// で始まる誰でも開ける URL だけ' });
+    const writer = deps.writer || require('./writer');
+    const banned = writer.parseBanned(env);
+    const check = writer.checkText(text, { banned });
+    if (body.preview === true || body.preview === 'true') {
+      return res.json({ ok: true, preview: true, text, imageUrl, check });
+    }
+    const force = body.force === true || body.force === 'true';
+    if (!check.ok && !force) {
+      const squash = (s) => String(s).toLowerCase().replace(/\s+/g, '');
+      const words = banned.filter((w) => squash(text).includes(squash(w)));
+      return res.status(400).json({ ok: false, blocked: true, reason: check.reason, words });
+    }
+    try {
+      const store = getStore();
+      const token = await store.getToken();
+      if (!token || !token.token) return res.status(503).json({ ok: false, error: 'Threads の鍵が入っていません（/oauth/start で接続）' });
+      const r = await getThreads().publishPost({ token: token.token, userId: token.userId, text, ...(imageUrl ? { imageUrl } : {}) });
+      if (!r.ok) {
+        console.error(`[threads] API_POST_FAILED stage=${r.stage} ${r.error}`);
+        return res.status(500).json({ ok: false, stage: r.stage, error: r.error });
+      }
+      await store.savePost({ mediaId: r.mediaId, text, type: 'manual', source, permalink: r.permalink, imageUrl: imageUrl || null, forced: force, postedAt: now().toISOString() });
+      console.log(`[threads] API_POSTED source=${source} media=${r.mediaId} image=${Boolean(imageUrl)} forced=${force}`);
+      res.json({ ok: true, mediaId: r.mediaId, permalink: r.permalink });
+    } catch (e) {
+      console.error('[threads] API_POST_ERROR:', e);
+      res.status(500).json({ ok: false, error: e.message });
     }
   });
 
