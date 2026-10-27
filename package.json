@@ -1,0 +1,24 @@
+{
+  "name": "threads-bot",
+  "version": "0.1.0",
+  "description": "鈴木個人の趣味用 Threads アカウントに、毎日2回 AI が書いた投稿を自動で出す小さな Cloud Run サービス",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "jest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.113.0",
+    "@google-cloud/firestore": "^8.7.0",
+    "axios": "^1.13.6",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.2.2"
+  }
+}
