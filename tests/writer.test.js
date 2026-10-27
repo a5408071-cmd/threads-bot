@@ -1,4 +1,8 @@
-const { pickType, checkText, writePost, TYPES } = require('../src/writer');
+const { pickType, checkText, writePost, TYPES, parseBanned, DEFAULT_BANNED } = require('../src/writer');
+
+// 120 字以上の「通る」見本（自動投稿は短すぎる案を書き直させる＝2026-10-27 社長「文章短すぎ！」）
+const LONG = '名古屋で平日ゴルフ行ける人、いませんか！？三重・岐阜は平日ガラガラで安くて最高なのに、周りが土日派ばっかりで寂しいです笑。30代、スコア90〜100で楽しむ派。20代・30代大歓迎、40代ももちろんOKです！気軽にコメントくださいね🙌 平日の午後からでも大丈夫です！';
+const LONG_NG = (w) => `${w}の仲間と平日ゴルフ行ける人、いませんか！？三重・岐阜は平日ガラガラで安くて最高なのに、周りが土日派ばっかりで寂しいです笑。30代、スコア90〜100で楽しむ派。20代・30代大歓迎、40代ももちろんOKです！気軽にコメントくださいね🙌 平日の午後からでも大丈夫です！`;
 
 function fakeAnthropic(texts) {
   let i = 0;
@@ -25,14 +29,28 @@ test('checkText: 500 字超・URL・NG 語・似すぎ・空は落ちる', () =>
   expect(checkText('詳しくは www.example.com まで').ok).toBe(false);
   expect(checkText('ウッドデザインパークのゴルフ会', { banned: ['ウッドデザインパーク'] })).toEqual({ ok: false, reason: 'NG語: ウッドデザインパーク' });
   expect(checkText('wood designpark のゴルフ会', { banned: ['Wood DesignPark'] }).ok).toBe(false); // 大文字小文字・空白は無視
-  const same = '名古屋で平日ゴルフ行ける人、いませんか！？三重・岐阜は平日ガラガラで安くて最高なのに、周りが土日派ばっかりで寂しいです笑';
-  expect(checkText(same + 'よろしく', { recent: [same] })).toEqual({ ok: false, reason: '直近の投稿と似すぎ' });
+  expect(checkText(LONG + 'よろしく', { recent: [LONG] })).toEqual({ ok: false, reason: '直近の投稿と似すぎ' });
   expect(checkText('   ').ok).toBe(false);
-  expect(checkText('今日のベストショットは？', { recent: [same] })).toEqual({ ok: true });
+  expect(checkText('今日のベストショットは？', { recent: [LONG] })).toEqual({ ok: true });
+});
+
+test('checkText: minChars を渡したときだけ短すぎる案を落とす（/api/post＝社長の一言には掛けない）', () => {
+  expect(checkText('今日のベストショットは？', { minChars: 120 }).ok).toBe(false);
+  expect(checkText('今日のベストショットは？', { minChars: 120 }).reason).toMatch(/短すぎ/);
+  expect(checkText('今日のベストショットは？').ok).toBe(true);
+  expect(checkText(LONG, { minChars: 120 }).ok).toBe(true);
+});
+
+test('NG 語は環境変数が空でも既定（会社名・本名）で止まり、全角・半角の違いも当てる', () => {
+  expect(DEFAULT_BANNED).toEqual(expect.arrayContaining(['ウッドデザインパーク', 'セルフカフェ', '鈴木大基']));
+  expect(parseBanned({})).toEqual(expect.arrayContaining(DEFAULT_BANNED));
+  expect(parseBanned({ THREADS_BANNED_WORDS: '追加語' })).toEqual(expect.arrayContaining([...DEFAULT_BANNED, '追加語']));
+  expect(checkText('ＷＤＰのゴルフ会', { banned: ['WDP'] }).ok).toBe(false);
+  expect(checkText('ｾﾙﾌｶﾌｪ行った', { banned: ['セルフカフェ'] }).ok).toBe(false);
 });
 
 test('writePost: NG 語は 2 回書き直しても落ちたら ok:false', async () => {
-  const a = fakeAnthropic(['ウッドの話', 'ウッドの話2', 'ウッドの話3']);
+  const a = fakeAnthropic([LONG_NG('ウッド'), LONG_NG('ウッド2'), LONG_NG('ウッド3')]);
   const r = await writePost({ type: 'question', recent: [], dateKey: '2026-10-28', env: { THREADS_BANNED_WORDS: 'ウッド;鈴木' }, anthropic: a });
   expect(r).toMatchObject({ ok: false, type: 'question' });
   expect(r.reason).toMatch(/NG語/);
@@ -40,45 +58,44 @@ test('writePost: NG 語は 2 回書き直しても落ちたら ok:false', async 
 });
 
 test('writePost: 1 回目が落ちて 2 回目が通れば attempts 2、書き直しの指示に落ちた理由が入る', async () => {
-  const a = fakeAnthropic(['https://x.y を見て', '名古屋で平日ゴルフ行ける人いませんか？']);
+  const a = fakeAnthropic(['https://x.y を見て', LONG]);
   const r = await writePost({ type: 'question', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
-  expect(r).toEqual({ ok: true, text: '名古屋で平日ゴルフ行ける人いませんか？', type: 'question', attempts: 2 });
+  expect(r).toEqual({ ok: true, text: LONG, type: 'question', attempts: 2 });
   expect(JSON.stringify(a.messages.create.mock.calls[1][0])).toMatch(/URL/);
 });
 
+test('writePost: 120 字未満の案は短すぎるとして書き直させる', async () => {
+  const a = fakeAnthropic(['今日のベストショットは？', LONG]);
+  const r = await writePost({ type: 'hook', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
+  expect(r).toMatchObject({ ok: true, attempts: 2, text: LONG });
+  expect(JSON.stringify(a.messages.create.mock.calls[1][0])).toMatch(/短すぎ/);
+});
+
 test('writePost の system に人物像と禁止事項、user に日付・型・直近の投稿が入る', async () => {
-  const a = fakeAnthropic(['今日のベストショットは？']);
+  const a = fakeAnthropic([LONG]);
   await writePost({ type: 'hook', recent: ['前の投稿です'], dateKey: '2026-10-28', env: {}, anthropic: a });
   const call = a.messages.create.mock.calls[0][0];
   const sys = String(call.system);
   expect(sys).toMatch(/名古屋/); expect(sys).toMatch(/90/); expect(sys).toMatch(/ゴルフ場の名前/); expect(sys).toMatch(/作り話/);
+  expect(sys).toMatch(/150〜300字/);
   expect(call.model).toBe('claude-opus-5-5');
+  expect(call.max_tokens).toBeGreaterThanOrEqual(8000);
   const user = JSON.stringify(call.messages);
   expect(user).toMatch(/2026-10-28/); expect(user).toMatch(/水/); expect(user).toMatch(/前の投稿です/);
 });
 
 test('writePost は前後の引用符や「投稿:」の見出しを剥がす', async () => {
-  const a = fakeAnthropic(['投稿:\n「今日のベストショットは？」']);
+  const a = fakeAnthropic([`投稿:\n「${LONG}」`]);
   const r = await writePost({ type: 'hook', recent: [], dateKey: '2026-10-28', env: { THREADS_MODEL: 'x' }, anthropic: a });
-  expect(r.text).toBe('今日のベストショットは？');
+  expect(r.text).toBe(LONG);
   expect(a.messages.create.mock.calls[0][0].model).toBe('x');
 });
 
 test('writePost: stop_reason が max_tokens（途中で切れた）の案は使わず書き直させる', async () => {
   let i = 0;
-  const outs = [{ text: '名古屋で平日ゴルフ行ける人', stop: 'max_tokens' }, { text: '名古屋で平日ゴルフ行ける人いませんか？', stop: 'end_turn' }];
+  const outs = [{ text: LONG.slice(0, 130), stop: 'max_tokens' }, { text: LONG, stop: 'end_turn' }];
   const a = { messages: { create: jest.fn(async () => { const o = outs[i++]; return { content: [{ type: 'text', text: o.text }], stop_reason: o.stop }; }) } };
   const r = await writePost({ type: 'question', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
-  expect(r).toMatchObject({ ok: true, attempts: 2, text: '名古屋で平日ゴルフ行ける人いませんか？' });
+  expect(r).toMatchObject({ ok: true, attempts: 2, text: LONG });
   expect(JSON.stringify(a.messages.create.mock.calls[1][0])).toMatch(/途中で切れ/);
-  expect(a.messages.create.mock.calls[0][0].max_tokens).toBeGreaterThanOrEqual(8000);
-});
-
-test('NG 語は環境変数が空でも既定（会社名・本名）で止まり、全角・半角の違いも当てる', () => {
-  const { parseBanned, DEFAULT_BANNED } = require('../src/writer');
-  expect(DEFAULT_BANNED).toEqual(expect.arrayContaining(['ウッドデザインパーク', 'セルフカフェ', '鈴木大基']));
-  expect(parseBanned({})).toEqual(expect.arrayContaining(DEFAULT_BANNED));
-  expect(parseBanned({ THREADS_BANNED_WORDS: '追加語' })).toEqual(expect.arrayContaining([...DEFAULT_BANNED, '追加語']));
-  expect(checkText('ＷＤＰのゴルフ会', { banned: ['WDP'] }).ok).toBe(false);
-  expect(checkText('ｾﾙﾌｶﾌｪ行った', { banned: ['セルフカフェ'] }).ok).toBe(false);
 });

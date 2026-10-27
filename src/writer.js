@@ -7,6 +7,7 @@ const persona = require('./persona');
 const TYPES = ['question', 'aruaru', 'invite', 'season', 'small', 'hook'];
 const MAX_ATTEMPTS = 3;
 const MAX_CHARS = 500;
+const MIN_CHARS = 120; // 短すぎる案は書き直させる（2026-10-27 社長「文章短すぎ！」）
 const SIMILARITY_LIMIT = 0.6;
 const DEFAULT_MODEL = 'claude-opus-5-5';
 const MAX_TOKENS = 8000; // thinking の分も数えられるので小さいと本文が途中で切れる（iso-bot の中部経済新聞で 3000〜8000 で切れた実績）
@@ -54,10 +55,11 @@ function parseBanned(env = {}) {
 }
 
 /** @returns {{ok:true}|{ok:false, reason:string}} */
-function checkText(text, { banned = [], recent = [] } = {}) {
+function checkText(text, { banned = [], recent = [], minChars = 0 } = {}) {
   const t = String(text || '').trim();
   if (!t) return { ok: false, reason: '本文が空' };
   if (t.length > MAX_CHARS) return { ok: false, reason: `${MAX_CHARS}字超（${t.length}字）` };
+  if (minChars && t.length < minChars) return { ok: false, reason: `短すぎる（${t.length}字。${minChars}字以上・3〜6文で）` }; // 自動投稿だけ（社長の一言＝/api/post には掛けない）
   if (URL_RE.test(t)) return { ok: false, reason: 'URLが入っている' };
   const n = norm(t);
   for (const w of banned) {
@@ -112,7 +114,7 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic }) {
     const raw = (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
     const text = cleanOutput(raw);
     // 途中で切れた案（stop_reason=max_tokens）は空でなくても使わない
-    const c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : checkText(text, { banned, recent });
+    const c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : checkText(text, { banned, recent, minChars: MIN_CHARS });
     if (c.ok) return { ok: true, text, type, attempts: attempt };
     lastReason = c.reason;
     reasons.push(c.reason);
@@ -121,4 +123,4 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic }) {
   return { ok: false, reason: lastReason, type };
 }
 
-module.exports = { pickType, checkText, writePost, similarity, parseBanned, TYPES, MAX_CHARS, DEFAULT_MODEL, DEFAULT_BANNED, MAX_TOKENS };
+module.exports = { pickType, checkText, writePost, similarity, parseBanned, TYPES, MAX_CHARS, MIN_CHARS, DEFAULT_MODEL, DEFAULT_BANNED, MAX_TOKENS };
