@@ -143,7 +143,13 @@ function createApp(deps = {}) {
       const tok = await getStore().getToken();
       if (!tok || !tok.token) return res.status(503).json({ ok: false, error: '鍵なし' });
       const r = await getThreads().whoAmI(tok.token);
-      res.json({ ok: true, storedUserId: tok.userId, ...r });
+      let fixed = false;
+      if (req.query.fix === '1' && r.id && String(r.id) !== String(tok.userId)) {
+        await getStore().setToken({ ...tok, userId: String(r.id) });
+        fixed = true;
+        console.log(`[threads] USERID_FIXED ${tok.userId} -> ${r.id}`);
+      }
+      res.json({ ok: true, storedUserId: tok.userId, ...r, fixed });
     } catch (e) {
       res.status(500).json({ ok: false, error: require('./threads').metaError(e) });
     }

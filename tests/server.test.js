@@ -109,3 +109,15 @@ describe('GET /media/photo/:id.jpg（Meta が写真を取りに来る口）', ()
     await request(app).get('/media/photo/%2F..%2Fetc.jpg?sig=good').expect(403);
   });
 });
+
+test('/admin/whoami?fix=1 は保存した userId が /me と違えば書き直す', async () => {
+  const { memoryStore } = require('../src/store');
+  const store = memoryStore();
+  await store.setToken({ token: 'tk', userId: '29077612258522050', expiresAt: '2026-12-20T00:00:00.000Z' });
+  const threads = { whoAmI: jest.fn(async () => ({ id: '29077612258522047', username: 'tete', scopes: null, appId: null })) };
+  const app = createApp({ env: { CRON_KEY: 'k' }, store, threads });
+  const r = await request(app).get('/admin/whoami?key=k&fix=1').expect(200);
+  expect(r.body).toMatchObject({ storedUserId: '29077612258522050', id: '29077612258522047', fixed: true });
+  expect((await store.getToken()).userId).toBe('29077612258522047');
+  expect(JSON.stringify(r.body)).not.toMatch(/"tk"/);
+});

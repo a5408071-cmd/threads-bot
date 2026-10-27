@@ -77,7 +77,9 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
       grant_type: 'authorization_code', redirect_uri: redirectUri, code,
     });
     const long = await getRoot('/access_token', { grant_type: 'th_exchange_token', client_secret: env.THREADS_APP_SECRET, access_token: short.access_token });
-    return { token: long.access_token, userId: String(short.user_id), expiresAt: expiresAtFrom(long.expires_in) };
+    // user_id は 2^53 を超える数字で JSON の読み込みで末尾が丸まる（2026-10-27 実測: …047 が …050 になり投稿が「Object does not exist」）。/me は文字列で返すのでそちらを使う
+    const me = await get('/me', { fields: 'id', access_token: long.access_token });
+    return { token: long.access_token, userId: String(me.id), expiresAt: expiresAtFrom(long.expires_in) };
   }
 
   async function refreshToken(token) {

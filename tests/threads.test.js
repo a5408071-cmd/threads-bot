@@ -78,10 +78,11 @@ test('コンテナ作成が Meta のエラーなら error に message、stage co
   expect(r).toEqual({ ok: false, stage: 'container', error: 'Invalid OAuth access token' });
 });
 
-test('exchangeCode は短期→長期の 2 段で expiresAt を付ける', async () => {
+test('exchangeCode は短期→長期の 2 段で expiresAt を付け、userId は /me から文字列で取る（user_id は 2^53 超で丸まる＝2026-10-27 実測 …047 が …050 に）', async () => {
   const h = http([
-    { match: /\/oauth\/access_token$/, reply: { access_token: 'short', user_id: 'u1' } },
+    { match: /\/oauth\/access_token$/, reply: { access_token: 'short', user_id: 29077612258522050 } },
     { match: /\/access_token$/, reply: { access_token: 'long', token_type: 'bearer', expires_in: 5184000 } },
+    { match: /\/me$/, reply: { id: 'u1', username: 'tete' } },
   ]);
   const t = createThreads({ http: h, env: { THREADS_APP_ID: 'app', THREADS_APP_SECRET: 'sec' }, sleep: noSleep, now: () => new Date('2026-10-27T00:00:00Z') });
   const r = await t.exchangeCode({ code: 'cd', redirectUri: 'https://x/oauth/callback' });
@@ -133,13 +134,14 @@ test('トークン関係の道はバージョン無し（graph.threads.net/oauth
     { match: /\/oauth\/access_token$/, reply: { access_token: 'short', user_id: 'u1' } },
     { match: /\/access_token$/, reply: { access_token: 'long', expires_in: 5184000 } },
     { match: /\/refresh_access_token$/, reply: { access_token: 'long2', expires_in: 5184000 } },
+    { match: /\/me$/, reply: { id: 'u1' } },
   ]);
   const t = createThreads({ http: h, env: { THREADS_APP_ID: 'app', THREADS_APP_SECRET: 'sec' }, sleep: noSleep });
   await t.exchangeCode({ code: 'cd', redirectUri: 'https://x/cb' });
   await t.refreshToken('long');
   expect(h.calls[0].url).toBe('https://graph.threads.net/oauth/access_token');
   expect(h.calls[1].url).toBe('https://graph.threads.net/access_token');
-  expect(h.calls[2].url).toBe('https://graph.threads.net/refresh_access_token');
+  expect(h.calls[3].url).toBe('https://graph.threads.net/refresh_access_token');
 });
 
 test('whoAmI は /me と /debug_token で鍵の持ち主と権限を返す（鍵そのものは返さない）', async () => {
