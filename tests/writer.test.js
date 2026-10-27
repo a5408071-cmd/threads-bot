@@ -99,3 +99,10 @@ test('writePost: stop_reason が max_tokens（途中で切れた）の案は使�
   expect(r).toMatchObject({ ok: true, attempts: 2, text: LONG });
   expect(JSON.stringify(a.messages.create.mock.calls[1][0])).toMatch(/途中で切れ/);
 });
+
+test('引用符は本文全体を包んでいるときだけ剥がす（文中の「…」で始まる本文の先頭を削らない）', async () => {
+  const body = `「明日はゴルフだから早く寝よう」と決めたはずが、気づいたら三杯目…これ、ゴルファーあるあるですよね笑。${LONG}`;
+  const a = fakeAnthropic([body]);
+  const r = await writePost({ type: 'aruaru', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
+  expect(r.text).toBe(body);
+});

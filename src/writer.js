@@ -75,7 +75,11 @@ function checkText(text, { banned = [], recent = [], minChars = 0 } = {}) {
 function cleanOutput(raw) {
   let t = String(raw || '').trim();
   t = t.replace(/^(投稿文?|本文)\s*[:：]\s*/i, '').trim();
-  t = t.replace(/^[「『"“]/, '').replace(/[」』"”]$/, '').trim();
+  // 本文全体を引用符で包んでいるときだけ剥がす（「…」で始まる文の先頭を削らない。2026-10-27 の見本で発生）
+  const pairs = [['「', '」'], ['『', '』'], ['"', '"'], ['“', '”']];
+  for (const [open, close] of pairs) {
+    if (t.startsWith(open) && t.endsWith(close) && t.indexOf(close) === t.length - close.length) { t = t.slice(open.length, -close.length).trim(); break; }
+  }
   return t;
 }
 
