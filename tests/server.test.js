@@ -1,9 +1,9 @@
 const request = require('supertest');
 const { createApp } = require('../src/server');
 
-test('GET /healthz は ok', async () => {
+test('GET /health は ok（/healthz は Cloud Run の入口が横取りして 404 になる＝2026-10-27 実測。iso-bot も同じ）', async () => {
   const app = createApp({ env: { CRON_KEY: 'k' } });
-  await request(app).get('/healthz').expect(200, { ok: true });
+  await request(app).get('/health').expect(200, { ok: true });
 });
 
 test('cron 系は鍵が無いと 403、ヘッダでもクエリでも通る', async () => {

@@ -1,6 +1,6 @@
 /**
  * threads-bot の HTTP 入口。
- *   GET  /healthz        … 生存確認
+ *   GET  /health         … 生存確認
  *   GET  /cron/tick      … 10分おきの見回り（X-Cron-Key か ?key=）。?dry=1 は文を返すだけ、?test=1 は文を社長DMへ（投稿しない）
  *   POST /api/post       … イソからの投稿（X-Cron-Key。JSON {text, imageUrl?, source?, preview?, force?}）
  *   GET  /admin/status   … 今日の枠・トークンの残り日数・直近の投稿（鍵そのものは返さない）
@@ -47,7 +47,7 @@ function createApp(deps = {}) {
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
 
-  app.get('/healthz', (req, res) => res.json({ ok: true }));
+  app.get('/health', (req, res) => res.json({ ok: true })); // /healthz は Cloud Run の入口が横取りして 404 になる（2026-10-27 実測）
 
   /** cron 系の共通の門。通れば true、通らなければ応答済みで false */
   const gate = (req, res) => {

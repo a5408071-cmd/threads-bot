@@ -16,7 +16,7 @@ Cloud Run（サービス名 `threads-bot`、asia-northeast1、プロジェクト
 
 | パス | 認証 | 動き |
 |---|---|---|
-| `GET /healthz` | なし | `{ok:true}` |
+| `GET /health` | なし | `{ok:true}`（`/healthz` は Cloud Run の入口が横取りして 404 になる） |
 | `GET /cron/tick` | `X-Cron-Key` ヘッダ か `?key=` | 10 分おきの見回り（Cloud Scheduler `threads-tick`）。`?dry=1` は投稿せず文を返す、`?test=1` は文を社長 DM に送るだけ |
 | `GET /admin/status` | 同上 | 今日の枠・投稿済み・鍵の残り日数・直近の投稿（鍵そのものは返さない） |
 | `POST /api/post` | 同上 | イソからの投稿。JSON `{text, imageUrl?, preview?, force?}`。`preview:true` は投稿しない。NG 語は 400（`force:true` で通す） |
