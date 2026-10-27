@@ -37,6 +37,11 @@ function createApp(deps = {}) {
   let notify = deps.notify || null;
   const getNotify = () => { if (!notify) notify = require('./notify').createNotify({ env }); return notify; };
   let replies = deps.replies === undefined ? null : deps.replies;
+  let photos = deps.photos === undefined ? null : deps.photos;
+  const getPhotos = () => {
+    if (photos === null && deps.photos === undefined) photos = require('./photos').createPhotos({ store: getStore(), env, now });
+    return photos;
+  };
   const getReplies = () => {
     if (replies === null && deps.replies === undefined) {
       try { replies = require('./replies').createReplies({ threads: getThreads(), store: getStore(), notify: getNotify(), now }); } catch (e) { replies = null; }
@@ -63,7 +68,7 @@ function createApp(deps = {}) {
     if (env.THREADS_ENABLED === 'false') return res.json({ ok: true, disabled: true, mode }); // 緊急停止。Firestore にもつながない
     try {
       const tick = deps.tick || require('./tick');
-      const r = await tick.runTick({ env, store: getStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: getNotify(), anthropic: getAnthropic(), now, mode, replies: getReplies() });
+      const r = await tick.runTick({ env, store: getStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: getNotify(), anthropic: getAnthropic(), now, mode, replies: getReplies(), photos: getPhotos(), forcePhoto: mode !== 'live' && req.query.photo === '1' });
       const errs = (r && r.errors) || [];
       if (errs.length) console.error(`[threads] TICK_ERRORS ${errs.join(' | ')}`);
       res.status(errs.length ? 500 : 200).json(r);

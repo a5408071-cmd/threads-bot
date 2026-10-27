@@ -14,6 +14,7 @@ const C = {
   replies: 'threads_replies',
   config: 'threads_config',
   alerts: 'threads_alerts',
+  photos: 'threads_photos',
 };
 
 function createStore(db, { now = () => new Date() } = {}) {
@@ -122,6 +123,19 @@ function createStore(db, { now = () => new Date() } = {}) {
   }
 
   /** 同じ知らせを hours ごとに 1 回だけ。出してよいときは時刻を書いて true */
+  /** 写真の使い回し（threads_photos/<fileId>）。days 以内に使っていれば true */
+  async function photoUsedRecently(fileId, days) {
+    const snap = await col(C.photos).doc(String(fileId)).get();
+    if (!snap || !snap.exists || !snap.data().lastUsedAt) return false;
+    return now().getTime() - new Date(snap.data().lastUsedAt).getTime() < days * 86400000;
+  }
+  async function markPhotoUsed(fileId) {
+    const ref = col(C.photos).doc(String(fileId));
+    const snap = await ref.get();
+    const uses = (snap && snap.exists && Number(snap.data().uses)) || 0;
+    await ref.set({ lastUsedAt: now().toISOString(), uses: uses + 1 });
+  }
+
   async function alertDue(key, hours = 12) {
     const ref = col(C.alerts).doc(key);
     const t = now();
@@ -134,7 +148,7 @@ function createStore(db, { now = () => new Date() } = {}) {
     });
   }
 
-  return { getDay, ensureDay, claimSlot, releaseSlot, markPosted, markSkipped, savePost, recentPosts, getToken, setToken, getConfig, setConfig, seenReply, markReplySeen, alertDue, setOauthState, takeOauthState };
+  return { getDay, ensureDay, claimSlot, releaseSlot, markPosted, markSkipped, savePost, recentPosts, getToken, setToken, getConfig, setConfig, seenReply, markReplySeen, alertDue, setOauthState, takeOauthState, photoUsedRecently, markPhotoUsed };
 }
 
 /** Firestore の使う部分だけを Map で真似る（テスト用）。createStore に渡すので本番と同じ経路を通る */

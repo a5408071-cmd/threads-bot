@@ -12,6 +12,12 @@ Cloud Run（サービス名 `threads-bot`、asia-northeast1、プロジェクト
 - 1 時間に 1 回コメントを見に行き、新しいものがあればイソ経由で社長 DM に知らせる
 - 鍵（60 日で切れる）は残り 10 日を切ると自動で延ばす。延ばせなければ社長 DM に知らせる
 
+## 写真
+
+本物の写真を Drive の **イソ保管庫/共通/Threads写真/**（`THREADS_PHOTO_FOLDER_ID`）にためておくと、投稿の半分くらい（`THREADS_PHOTO_RATE` 既定 0.5）にランダムで 1 枚付ける。同じ写真は 60 日あける。
+AI は写真を見て写っているものに合う文を書く（いつ・どこで撮ったかは断定しない）。フォルダは Cloud Run のサービスアカウントに閲覧者で共有してある。公開 URL は iso-bot の `/media/drive/<ID>.jpg?sig=…`（GBP と同じ）。
+写真が取れなければ写真なしで投稿する。`/cron/tick?dry=1&photo=1` で写真付きの文を確かめられる。
+
 ## 入口
 
 | パス | 認証 | 動き |
@@ -37,6 +43,7 @@ Cloud Run（サービス名 `threads-bot`、asia-northeast1、プロジェクト
 | `THREADS_ENABLED` | `false` で全部止める（見回りも API も） |
 | `THREADS_AUTO_POST` | `false` で自動投稿だけ止める（イソからの投稿は残る） |
 | `THREADS_COPY_TO_OWNER` | `true` なら出した文の写しを社長 DM にも送る（最初の 1 週間だけ） |
+| `THREADS_PHOTO_FOLDER_ID` / `THREADS_PHOTO_RATE` | 写真のフォルダ ID と付ける確率（既定 0.5） |
 | `THREADS_SLOT_GRACE_MIN` | 枠の時刻を何分過ぎたら諦めるか（既定 60。止まっていた間の枠を深夜にまとめて出さないため） |
 | `TZ` | `Asia/Tokyo` |
 

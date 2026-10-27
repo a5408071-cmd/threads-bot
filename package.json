@@ -15,7 +15,8 @@
     "@anthropic-ai/sdk": "^0.113.0",
     "@google-cloud/firestore": "^8.7.0",
     "axios": "^1.13.6",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "google-auth-library": "^9.15.1"
   },
   "devDependencies": {
     "jest": "^29.7.0",

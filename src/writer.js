@@ -102,7 +102,17 @@ function userPrompt({ type, recent, dateKey, reasons }) {
 /**
  * @returns {Promise<{ok:true,text,type,attempts}|{ok:false,reason,type}>}
  */
-async function writePost({ type, recent = [], dateKey, env = {}, anthropic }) {
+/** 写真を添えるときの user content（画像ブロック＋指示） */
+function userContent({ type, recent, dateKey, reasons, photo }) {
+  const text = userPrompt({ type, recent, dateKey, reasons });
+  if (!photo || !photo.bytes) return text;
+  return [
+    { type: 'image', source: { type: 'base64', media_type: photo.mediaType || 'image/jpeg', data: Buffer.from(photo.bytes).toString('base64') } },
+    { type: 'text', text: `${text}\n\nこの写真を添えて投稿します。写っているもの（景色・季節感・雰囲気・飲み物など）に合う文にしてください。ただし、いつ・どこで撮ったかは断定しない（「先週」「昨日」「〇〇カントリー」のように書かない。「こういう時間帯のコースが好き」のような言い方にする）。写真の説明文にはせず、あくまで人に話しかける投稿にする。` },
+  ];
+}
+
+async function writePost({ type, recent = [], dateKey, env = {}, anthropic, photo = null }) {
   const banned = parseBanned(env);
   const model = env.THREADS_MODEL || DEFAULT_MODEL;
   const reasons = [];
@@ -113,7 +123,7 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic }) {
       max_tokens: MAX_TOKENS,
       output_config: { effort: 'medium' },
       system: persona.SYSTEM,
-      messages: [{ role: 'user', content: userPrompt({ type, recent, dateKey, reasons }) }],
+      messages: [{ role: 'user', content: userContent({ type, recent, dateKey, reasons, photo }) }],
     });
     const raw = (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
     const text = cleanOutput(raw);

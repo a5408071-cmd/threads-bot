@@ -86,3 +86,13 @@ test('oauthState は 10 分で切れ、take は 1 回きり', async () => {
   expect(await s.takeOauthState('st2')).toBe(false);
   expect(await s.takeOauthState('nope')).toBe(false);
 });
+
+test('photoUsedRecently / markPhotoUsed（60 日）', async () => {
+  let t = new Date('2026-10-28T00:00:00Z');
+  const s = memoryStore({ now: () => t });
+  expect(await s.photoUsedRecently('P1', 60)).toBe(false);
+  await s.markPhotoUsed('P1');
+  expect(await s.photoUsedRecently('P1', 60)).toBe(true);
+  t = new Date('2026-12-28T00:00:00Z');
+  expect(await s.photoUsedRecently('P1', 60)).toBe(false);
+});

@@ -219,3 +219,41 @@ test('猶予超えの枠がすでに claim 済み（投稿中に止まった）�
   expect(r.skipped[0].reason).toMatch(/投稿中に止ま/);
   expect(d.notify.owner.mock.calls[0][0]).toMatch(/Threads を確認/);
 });
+
+test('写真: shouldAttach が true で pick が返れば imageUrl 付きで投稿し、使用を記録、写しに写真名を添える', async () => {
+  const d = await withToken(deps());
+  const photo = { id: 'P1', name: 'course.jpg', url: 'https://iso.example/media/drive/P1.jpg?sig=x', mediaType: 'image/jpeg', bytes: Buffer.from('x') };
+  d.photos = { shouldAttach: () => true, pick: jest.fn(async () => photo) };
+  const r = await runTick(d);
+  expect(d.threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ imageUrl: photo.url }));
+  expect(d.writer.writePost.mock.calls[0][0].photo).toBe(photo);
+  expect(r.posted[0]).toMatchObject({ photo: 'course.jpg' });
+  expect(await d.store.photoUsedRecently('P1', 60)).toBe(true);
+  expect((await d.store.recentPosts(1))[0]).toMatchObject({ photoId: 'P1' });
+  expect(d.notify.owner.mock.calls[0][0]).toMatch(/course\.jpg/);
+});
+
+test('写真: pick が null なら写真なしで投稿する（止めない）', async () => {
+  const d = await withToken(deps());
+  d.photos = { shouldAttach: () => true, pick: jest.fn(async () => null) };
+  const r = await runTick(d);
+  expect(r.posted).toHaveLength(1);
+  expect(d.threads.publishPost.mock.calls[0][0].imageUrl).toBeUndefined();
+});
+
+test('写真: dry/test でも preview に写真名が入る（使用は記録しない）', async () => {
+  const d = await withToken(deps({ mode: 'dry' }));
+  const photo = { id: 'P1', name: 'course.jpg', url: 'u', mediaType: 'image/jpeg', bytes: Buffer.from('x') };
+  d.photos = { shouldAttach: () => true, pick: jest.fn(async () => photo) };
+  const r = await runTick(d);
+  expect(r.preview).toMatchObject({ photo: 'course.jpg' });
+  expect(await d.store.photoUsedRecently('P1', 60)).toBe(false);
+});
+
+test('写真: forcePhoto なら shouldAttach に関係なく pick する（dry/test の確認用 ?photo=1）', async () => {
+  const d = await withToken(deps({ mode: 'dry' }));
+  d.photos = { shouldAttach: () => false, pick: jest.fn(async () => ({ id: 'P1', name: 'a.jpg', url: 'u', mediaType: 'image/jpeg', bytes: Buffer.from('x') })) };
+  const r = await runTick({ ...d, forcePhoto: true });
+  expect(d.photos.pick).toHaveBeenCalled();
+  expect(r.preview.photo).toBe('a.jpg');
+});

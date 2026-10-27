@@ -18,7 +18,7 @@ const TOKEN_ALERT_HOURS = 12;
 
 const daysLeft = (expiresAt, now) => Math.floor((new Date(expiresAt).getTime() - now.getTime()) / 86400000);
 
-async function runTick({ env = process.env, store, threads, writer = defaultWriter, notify, anthropic, now = () => new Date(), mode = 'live', replies = null, draw = null }) {
+async function runTick({ env = process.env, store, threads, writer = defaultWriter, notify, anthropic, now = () => new Date(), mode = 'live', replies = null, draw = null, photos = null, forcePhoto = false }) {
   const t = now();
   const dateKey = slots.jstDateKey(t);
   const out = { ok: true, mode, dateKey, slots: null, due: null, posted: [], skipped: [], preview: null, token: null, replies: null, autoPost: env.THREADS_AUTO_POST !== 'false', errors: [] };
@@ -66,10 +66,17 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
   out.due = due;
   const canPost = Boolean(token && token.token);
 
+  // 写真（本物の写真を Drive からランダムに。取れなければ写真なしで続ける）
+  const pickPhoto = async () => {
+    if (!photos || (!forcePhoto && !photos.shouldAttach())) return null;
+    try { return await photos.pick(); } catch (e) { console.warn(`[threads] PHOTO_PICK_THROW ${e.message}`); return null; }
+  };
   const compose = async () => {
     const recent = await store.recentPosts(RECENT_POSTS);
     const type = writer.pickType(recent.slice(0, RECENT_TYPES).map((p) => p.type), t);
-    return writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic });
+    const photo = await pickPhoto();
+    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo });
+    return { ...w, photo };
   };
 
   if (mode === 'dry' || mode === 'test') {
@@ -77,7 +84,7 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
     if (!canPost) return out;
     const w = await compose();
     if (!w.ok) { fail(`本文を作れなかった: ${w.reason}`); return out; }
-    out.preview = { text: w.text, type: w.type, attempts: w.attempts };
+    out.preview = { text: w.text, type: w.type, attempts: w.attempts, ...(w.photo ? { photo: w.photo.name, photoUrl: w.photo.url } : {}) };
     if (mode === 'test') await tell(`（テスト。投稿はしていません）\n型: ${w.type}\n\n${w.text}`);
     return out;
   }
@@ -111,7 +118,7 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
         out.skipped.push({ index: idx, reason: w.reason });
         await tell(`⚠ 今日の ${n} 本目（${hm}）は出せませんでした（${w.reason}）`);
       } else if (w) {
-        const r = await threads.publishPost({ token: token.token, userId: token.userId, text: w.text });
+        const r = await threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}) });
         if (!r.ok) {
           // 同じ枠を繰り返さない（release しない）。本当の失敗として返す
           await store.markSkipped(dateKey, idx, `投稿失敗: ${r.error}`);
@@ -120,11 +127,12 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
           await tell(`⚠ 今日の ${n} 本目（${hm}）の投稿に失敗しました（${r.stage}: ${r.error}）`);
         } else {
           await store.markPosted(dateKey, idx, { mediaId: r.mediaId });
-          await store.savePost({ mediaId: r.mediaId, text: w.text, type: w.type, source: 'auto', permalink: r.permalink, postedAt: t.toISOString() });
-          out.posted.push({ index: idx, mediaId: r.mediaId, permalink: r.permalink, type: w.type });
+          await store.savePost({ mediaId: r.mediaId, text: w.text, type: w.type, source: 'auto', permalink: r.permalink, postedAt: t.toISOString(), ...(w.photo ? { photoId: w.photo.id, photoName: w.photo.name } : {}) });
+          if (w.photo) { try { await store.markPhotoUsed(w.photo.id); } catch (e) { console.warn(`[threads] PHOTO_MARK_FAILED ${e.message}`); } }
+          out.posted.push({ index: idx, mediaId: r.mediaId, permalink: r.permalink, type: w.type, ...(w.photo ? { photo: w.photo.name } : {}) });
           console.log(`[threads] POSTED slot=${idx} type=${w.type} media=${r.mediaId} chars=${w.text.length}`);
           if (env.THREADS_COPY_TO_OWNER === 'true') {
-            await tell(`📝 Threads に投稿しました（${n} 本目・${w.type}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
+            await tell(`📝 Threads に投稿しました（${n} 本目・${w.type}${w.photo ? `・📷 ${w.photo.name}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
           }
         }
       }

@@ -106,3 +106,15 @@ test('引用符は本文全体を包んでいるときだけ剥がす（文中�
   const r = await writePost({ type: 'aruaru', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
   expect(r.text).toBe(body);
 });
+
+test('writePost: 写真を渡すと user に画像ブロックと「写っているものに合わせる・いつどこでは断定しない」の指示が入る', async () => {
+  const a = fakeAnthropic([LONG]);
+  const photo = { id: 'P1', name: 'course.jpg', mediaType: 'image/jpeg', bytes: Buffer.from('jpegbytes') };
+  await writePost({ type: 'season', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a, photo });
+  const msg = a.messages.create.mock.calls[0][0].messages[0];
+  expect(Array.isArray(msg.content)).toBe(true);
+  const img = msg.content.find((b) => b.type === 'image');
+  expect(img).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: Buffer.from('jpegbytes').toString('base64') } });
+  const txt = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+  expect(txt).toMatch(/写真/); expect(txt).toMatch(/いつ|どこ/);
+});
