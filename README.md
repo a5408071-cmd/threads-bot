@@ -72,3 +72,9 @@ gcloud run deploy threads-bot --source . --region asia-northeast1 --project iso-
 - `src/replies.js` … コメントの取得と知らせ
 - `src/notify.js` … イソ経由で社長 DM
 - `src/store.js` … Firestore（コレクションは `threads_` 接頭辞）
+
+## 時間の上限（止まったときの記録がずれないように）
+
+- Cloud Run の `--timeout 300`、Cloud Scheduler `threads-tick` の `--attempt-deadline 300s`（どちらも設定済み）
+- AI の呼び出しは 60 秒・再試行 2 回（`src/server.js`）。書き直し 3 回＋写真の処理待ち 60 秒でも 300 秒に収まる
+- 投稿の途中で止まった枠は、60 分後の見回りが「投稿中に止まった可能性。Threads を確認」と社長 DM に知らせる
