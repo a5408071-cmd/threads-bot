@@ -7,6 +7,7 @@
  *   threads_alerts/<key>        … 社長 DM の知らせの最終時刻（同じ知らせを 12 時間に 1 回に）
  * テストは memoryStore()（Firestore の使う部分だけを Map で真似た fakeDb を createStore に渡す＝本番と同じ経路を通る）。
  */
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const C = {
   days: 'threads_days',
   posts: 'threads_posts',
@@ -103,6 +104,23 @@ function createStore(db, { now = () => new Date() } = {}) {
     await col(C.replies).doc(String(replyId)).set({ ...extra, seenAt: now().toISOString() });
   }
 
+  /** OAuth の state（CSRF よけ）。10 分で切れる。take は 1 回きり */
+  async function setOauthState(state) {
+    await col(C.config).doc('oauthState').set({ state, at: now().toISOString() });
+  }
+  async function takeOauthState(state) {
+    const ref = col(C.config).doc('oauthState');
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return false;
+      const d = snap.data();
+      // 合わない state では消さない（他人の当てずっぽうで社長の接続を邪魔されないように）。合ったときだけ 1 回きりで消す
+      if (!d.state || d.state !== state) return false;
+      tx.delete(ref);
+      return now().getTime() - new Date(d.at).getTime() <= OAUTH_STATE_TTL_MS;
+    });
+  }
+
   /** 同じ知らせを hours ごとに 1 回だけ。出してよいときは時刻を書いて true */
   async function alertDue(key, hours = 12) {
     const ref = col(C.alerts).doc(key);
@@ -116,7 +134,7 @@ function createStore(db, { now = () => new Date() } = {}) {
     });
   }
 
-  return { getDay, ensureDay, claimSlot, releaseSlot, markPosted, markSkipped, savePost, recentPosts, getToken, setToken, getConfig, setConfig, seenReply, markReplySeen, alertDue };
+  return { getDay, ensureDay, claimSlot, releaseSlot, markPosted, markSkipped, savePost, recentPosts, getToken, setToken, getConfig, setConfig, seenReply, markReplySeen, alertDue, setOauthState, takeOauthState };
 }
 
 /** Firestore の使う部分だけを Map で真似る（テスト用）。createStore に渡すので本番と同じ経路を通る */

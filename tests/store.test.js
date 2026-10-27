@@ -73,3 +73,16 @@ test('getConfig / setConfig', async () => {
   await s.setConfig('repliesInitialized', { at: 'x' });
   expect(await s.getConfig('repliesInitialized')).toEqual({ at: 'x' });
 });
+
+test('oauthState は 10 分で切れ、take は 1 回きり', async () => {
+  let t = new Date('2026-10-28T00:00:00Z');
+  const s = memoryStore({ now: () => t });
+  await s.setOauthState('st1');
+  t = new Date('2026-10-28T00:05:00Z');
+  expect(await s.takeOauthState('st1')).toBe(true);
+  expect(await s.takeOauthState('st1')).toBe(false);
+  await s.setOauthState('st2');
+  t = new Date('2026-10-28T00:16:00Z');
+  expect(await s.takeOauthState('st2')).toBe(false);
+  expect(await s.takeOauthState('nope')).toBe(false);
+});
