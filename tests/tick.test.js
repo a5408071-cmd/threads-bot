@@ -286,3 +286,12 @@ test('写真は 2 本に 1 本: 直前の投稿に写真があれば今回は付
   await runTick(d2);
   expect(d2.photos.pick).toHaveBeenCalled();
 });
+
+test('タグ: writer の tag を topicTag として投稿し、記録と写しに残す', async () => {
+  const d = await withToken(deps({ writer: { pickType: () => 'daily', writePost: jest.fn(async () => ({ ok: true, text: '日常の話です', type: 'daily', attempts: 1, tag: '名古屋' })) } }));
+  const r = await runTick(d);
+  expect(d.threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ topicTag: '名古屋' }));
+  expect((await d.store.recentPosts(1))[0]).toMatchObject({ tag: '名古屋' });
+  expect(r.posted[0]).toMatchObject({ tag: '名古屋' });
+  expect(d.notify.owner.mock.calls[0][0]).toMatch(/#名古屋/);
+});

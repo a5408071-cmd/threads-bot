@@ -86,7 +86,7 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
     if (!canPost) return out;
     const w = await compose();
     if (!w.ok) { fail(`本文を作れなかった: ${w.reason}`); return out; }
-    out.preview = { text: w.text, type: w.type, attempts: w.attempts, ...(w.photo ? { photo: w.photo.name, photoUrl: w.photo.url } : {}) };
+    out.preview = { text: w.text, type: w.type, attempts: w.attempts, tag: w.tag || null, ...(w.photo ? { photo: w.photo.name, photoUrl: w.photo.url } : {}) };
     if (mode === 'test') await tell(`（テスト。投稿はしていません）\n型: ${w.type}\n\n${w.text}`);
     return out;
   }
@@ -120,7 +120,7 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
         out.skipped.push({ index: idx, reason: w.reason });
         await tell(`⚠ 今日の ${n} 本目（${hm}）は出せませんでした（${w.reason}）`);
       } else if (w) {
-        const r = await threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}) });
+        const r = await threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}) });
         if (!r.ok) {
           // 同じ枠を繰り返さない（release しない）。本当の失敗として返す
           await store.markSkipped(dateKey, idx, `投稿失敗: ${r.error}`);
@@ -129,12 +129,12 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
           await tell(`⚠ 今日の ${n} 本目（${hm}）の投稿に失敗しました（${r.stage}: ${r.error}）`);
         } else {
           await store.markPosted(dateKey, idx, { mediaId: r.mediaId });
-          await store.savePost({ mediaId: r.mediaId, text: w.text, type: w.type, source: 'auto', permalink: r.permalink, postedAt: t.toISOString(), ...(w.photo ? { photoId: w.photo.id, photoName: w.photo.name } : {}) });
+          await store.savePost({ mediaId: r.mediaId, text: w.text, type: w.type, source: 'auto', permalink: r.permalink, postedAt: t.toISOString(), ...(w.tag ? { tag: w.tag } : {}), ...(w.photo ? { photoId: w.photo.id, photoName: w.photo.name } : {}) });
           if (w.photo) { try { await store.markPhotoUsed(w.photo.id); } catch (e) { console.warn(`[threads] PHOTO_MARK_FAILED ${e.message}`); } }
-          out.posted.push({ index: idx, mediaId: r.mediaId, permalink: r.permalink, type: w.type, ...(w.photo ? { photo: w.photo.name } : {}) });
+          out.posted.push({ index: idx, mediaId: r.mediaId, permalink: r.permalink, type: w.type, ...(w.tag ? { tag: w.tag } : {}), ...(w.photo ? { photo: w.photo.name } : {}) });
           console.log(`[threads] POSTED slot=${idx} type=${w.type} media=${r.mediaId} chars=${w.text.length}`);
           if (env.THREADS_COPY_TO_OWNER === 'true') {
-            await tell(`📝 Threads に投稿しました（${n} 本目・${w.type}${w.photo ? `・📷 ${w.photo.name}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
+            await tell(`📝 Threads に投稿しました（${n} 本目・${w.type}${w.photo ? `・📷 ${w.photo.name}` : ''}${w.tag ? `・#${w.tag}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
           }
         }
       }
@@ -149,16 +149,16 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
     try { w = await compose(); } catch (e) { fail(`本文の生成でエラー: ${e.message}`); }
     if (w && !w.ok) fail(`本文を作れなかった: ${w.reason}`);
     if (w && w.ok) {
-      const r = await threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}) });
+      const r = await threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}) });
       if (!r.ok) {
         fail(`投稿失敗（${r.stage}）: ${r.error}`);
         await tell(`⚠ 今すぐの投稿に失敗しました（${r.stage}: ${r.error}）`);
       } else {
-        await store.savePost({ mediaId: r.mediaId, text: w.text, type: w.type, source: 'auto', permalink: r.permalink, postedAt: t.toISOString(), manual: true, ...(w.photo ? { photoId: w.photo.id, photoName: w.photo.name } : {}) });
+        await store.savePost({ mediaId: r.mediaId, text: w.text, type: w.type, source: 'auto', permalink: r.permalink, postedAt: t.toISOString(), ...(w.tag ? { tag: w.tag } : {}), manual: true, ...(w.photo ? { photoId: w.photo.id, photoName: w.photo.name } : {}) });
         if (w.photo) { try { await store.markPhotoUsed(w.photo.id); } catch (e) { console.warn(`[threads] PHOTO_MARK_FAILED ${e.message}`); } }
-        out.posted.push({ index: null, manual: true, mediaId: r.mediaId, permalink: r.permalink, type: w.type, ...(w.photo ? { photo: w.photo.name } : {}) });
+        out.posted.push({ index: null, manual: true, mediaId: r.mediaId, permalink: r.permalink, type: w.type, ...(w.tag ? { tag: w.tag } : {}), ...(w.photo ? { photo: w.photo.name } : {}) });
         console.log(`[threads] POSTED manual type=${w.type} media=${r.mediaId} chars=${w.text.length}`);
-        await tell(`📝 Threads に投稿しました（手動・${w.type}${w.photo ? `・📷 ${w.photo.name}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
+        await tell(`📝 Threads に投稿しました（手動・${w.type}${w.photo ? `・📷 ${w.photo.name}` : ''}${w.tag ? `・#${w.tag}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
       }
     }
   }

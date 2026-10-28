@@ -154,3 +154,15 @@ test('whoAmI は /me と /debug_token で鍵の持ち主と権限を返す（鍵
   expect(r).toEqual({ id: 'u1', username: 'tete', scopes: ['threads_basic', 'threads_content_publish'], appId: 'app' });
   expect(JSON.stringify(r)).not.toMatch(/tk/);
 });
+
+test('publishPost: topicTag を topic_tag として渡す', async () => {
+  const h = http([
+    { match: /\/u1\/threads$/, reply: { id: 'c1' } },
+    { match: /\/c1$/, reply: { status: 'FINISHED' } },
+    { match: /\/u1\/threads_publish$/, reply: { id: 'm1' } },
+    { match: /\/m1$/, reply: { permalink: 'p' } },
+  ]);
+  const t = createThreads({ http: h, env: {}, sleep: noSleep });
+  await t.publishPost({ token: 'tk', userId: 'u1', text: 'x', topicTag: 'ゴルフ' });
+  expect(h.calls[0].opts).toMatchObject({ topic_tag: 'ゴルフ' });
+});

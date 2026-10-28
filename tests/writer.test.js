@@ -20,7 +20,7 @@ test('pickType は直近 2 本の型を避ける', () => {
 test('pickType は金曜・土曜・日曜は invite が出やすい（1000 回で 2 割超）', () => {
   let n = 0;
   for (let i = 0; i < 1000; i++) if (pickType([], new Date('2026-10-30T03:00:00Z'), Math.random) === 'invite') n++; // 10/30 は金曜
-  expect(n).toBeGreaterThan(200);
+  expect(n).toBeGreaterThan(150); // 型が 8 つに増えたので 2/11（他の型の 2 倍）
 });
 
 test('checkText: 500 字超・URL・NG 語・似すぎ・空は落ちる', () => {
@@ -60,7 +60,7 @@ test('writePost: NG 語は 2 回書き直しても落ちたら ok:false', async 
 test('writePost: 1 回目が落ちて 2 回目が通れば attempts 2、書き直しの指示に落ちた理由が入る', async () => {
   const a = fakeAnthropic(['https://x.y を見て', LONG]);
   const r = await writePost({ type: 'question', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
-  expect(r).toEqual({ ok: true, text: LONG, type: 'question', attempts: 2 });
+  expect(r).toEqual({ ok: true, text: LONG, type: 'question', attempts: 2, tag: 'ゴルフ' });
   expect(JSON.stringify(a.messages.create.mock.calls[1][0])).toMatch(/URL/);
 });
 
@@ -140,4 +140,59 @@ test('写真なしの最低字数は 80 字（写真ありは 120 字）', async
   const b = fakeAnthropic([mid, LONG]);
   const r2 = await writePost({ type: 'question', recent: [], dateKey: '2026-10-28', env: {}, anthropic: b, photo: { id: 'P', name: 'a.jpg', mediaType: 'image/jpeg', bytes: Buffer.from('x') } });
   expect(r2).toMatchObject({ ok: true, attempts: 2, text: LONG });
+});
+
+describe('ゴルフ以外の型とタグ（2026-10-28 社長「ゴルフ以外の季節とか時事とか関係ない話も入れ込んで タグもつけてフォロワー増やしたいな」）', () => {
+  test('型に daily（日常）と news（時事）があり、ゴルフ以外が 3 回に 1 回くらい出る', () => {
+    expect(TYPES).toEqual(expect.arrayContaining(['daily', 'news']));
+    let n = 0;
+    for (let i = 0; i < 3000; i++) if (['daily', 'news'].includes(pickType([], new Date('2026-10-28T03:00:00Z'), Math.random))) n++;
+    expect(n).toBeGreaterThan(700); expect(n).toBeLessThan(1500);
+  });
+
+  test('本文の最後の「タグ: xxx」を切り出す。# と . と & は落とし、50 字まで', async () => {
+    const a = fakeAnthropic([`${LONG}\nタグ: #ゴルフ好きと繋がりたい`]);
+    const r = await writePost({ type: 'question', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
+    expect(r.text).toBe(LONG);
+    expect(r.tag).toBe('ゴルフ好きと繋がりたい');
+    const b = fakeAnthropic([`${LONG}\nタグ：秋.の&ゴルフ`]);
+    expect((await writePost({ type: 'question', recent: [], dateKey: '2026-10-28', env: {}, anthropic: b })).tag).toBe('秋のゴルフ');
+  });
+
+  test('タグが無ければ型ごとの既定タグ', async () => {
+    const a = fakeAnthropic([LONG]);
+    const r = await writePost({ type: 'question', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
+    expect(r.tag).toBe('ゴルフ');
+    const b = fakeAnthropic([LONG]);
+    expect((await writePost({ type: 'daily', recent: [], dateKey: '2026-10-28', env: {}, anthropic: b })).tag).toBe('名古屋');
+  });
+
+  test('news 型はウェブ検索の道具を付けて呼び、政治・事件を避ける指示が入る。他の型は道具なし', async () => {
+    const a = fakeAnthropic([LONG]);
+    await writePost({ type: 'news', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
+    const call = a.messages.create.mock.calls[0][0];
+    expect(call.tools).toEqual([{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }]);
+    expect(JSON.stringify(call.messages)).toMatch(/検索/);
+    expect(String(call.system)).toMatch(/政治/);
+    const b = fakeAnthropic([LONG]);
+    await writePost({ type: 'daily', recent: [], dateKey: '2026-10-28', env: {}, anthropic: b });
+    expect(b.messages.create.mock.calls[0][0].tools).toBeUndefined();
+  });
+
+  test('news 型で pause_turn が返ったら続きを頼む（content を assistant として足す）', async () => {
+    let i = 0;
+    const outs = [
+      { content: [{ type: 'server_tool_use', id: 's1', name: 'web_search', input: { query: 'x' } }], stop_reason: 'pause_turn' },
+      { content: [{ type: 'text', text: LONG }], stop_reason: 'end_turn' },
+    ];
+    const a = { messages: { create: jest.fn(async () => outs[i++]) } };
+    const r = await writePost({ type: 'news', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
+    expect(r.ok).toBe(true);
+    const second = a.messages.create.mock.calls[1][0].messages;
+    expect(second[1]).toMatchObject({ role: 'assistant', content: outs[0].content });
+  });
+
+  test('本文に #ハッシュタグ が混ざっていたら落とす（タグは topic_tag で付ける）', () => {
+    expect(checkText(LONG + ' #ゴルフ').ok).toBe(false);
+  });
 });

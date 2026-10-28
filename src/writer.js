@@ -4,7 +4,11 @@
  */
 const persona = require('./persona');
 
-const TYPES = ['question', 'aruaru', 'invite', 'season', 'small', 'hook'];
+const TYPES = ['question', 'aruaru', 'invite', 'season', 'small', 'hook', 'daily', 'news'];
+const NON_GOLF = ['daily', 'news']; // ゴルフ以外（2026-10-28 社長「ゴルフ以外の季節とか時事とか関係ない話も」）。重みを 2 倍にして 3 回に 1 回くらい
+const WEB_SEARCH_TOOL = { type: 'web_search_20260209', name: 'web_search', max_uses: 3 };
+const MAX_CONTINUES = 3; // pause_turn（検索の続き）の上限
+const TAG_MAX = 50;
 const MAX_ATTEMPTS = 3;
 const MAX_CHARS = 500;
 const MIN_CHARS = 120; // 写真ありの最低字数（2026-10-27 社長「文章短すぎ！」）
@@ -31,7 +35,21 @@ function pickType(recentTypes = [], date = new Date(), rng = Math.random) {
   if (!pool.length) pool = TYPES.slice();
   const wd = jstWeekday(date);
   if ([5, 6, 0].includes(wd) && pool.includes('invite')) pool = [...pool, 'invite'];
+  for (const t of NON_GOLF) if (pool.includes(t)) pool = [...pool, t];
   return pool[Math.floor(rng() * pool.length)];
+}
+
+/** 本文の最後の「タグ: 〇〇」を切り出す。# . & は落とす。無ければ型の既定 */
+function splitTag(text, type) {
+  const lines = String(text || '').split('\n');
+  let tag = null;
+  for (let i = lines.length - 1; i >= 0 && i >= lines.length - 3; i--) {
+    const m = lines[i].match(/^\s*(?:タグ|tag|topic)\s*[:：]\s*(.+?)\s*$/i);
+    if (m) { tag = m[1]; lines.splice(i, 1); break; }
+  }
+  const body = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const clean = tag ? tag.replace(/[#＃.&\s]/g, '').slice(0, TAG_MAX) : '';
+  return { body, tag: clean || persona.DEFAULT_TAG[type] || 'ゴルフ' };
 }
 
 function norm(s) { return String(s || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ''); } // 全角・半角の違い（ＷＤＰ・ｾﾙﾌ）も当てる
@@ -64,6 +82,7 @@ function checkText(text, { banned = [], recent = [], minChars = 0 } = {}) {
   if (t.length > MAX_CHARS) return { ok: false, reason: `${MAX_CHARS}字超（${t.length}字）` };
   if (minChars && t.length < minChars) return { ok: false, reason: `短すぎる（${t.length}字。${minChars}字以上・3〜6文で）` }; // 自動投稿だけ（社長の一言＝/api/post には掛けない）
   if (URL_RE.test(t)) return { ok: false, reason: 'URLが入っている' };
+  if (/(^|\s)[#＃]\S/.test(t)) return { ok: false, reason: '本文に #ハッシュタグ が入っている（タグは「タグ: 〇〇」の行で 1 つだけ）' };
   const n = norm(t);
   for (const w of banned) {
     if (w && n.includes(norm(w))) return { ok: false, reason: `NG語: ${w}` };
@@ -91,6 +110,7 @@ function userPrompt({ type, recent, dateKey, reasons, photo = null }) {
     `今日: ${dateKey}（${WEEKDAYS[jstWeekday(dateKey)]}曜日）`,
     `型: ${type} … ${persona.TYPE_GUIDE[type] || ''}`,
   ];
+  if (type === 'news') lines.push('まずウェブ検索で今日・今週の明るい話題（スポーツ・季節の行事・グルメ・流行）を確かめてから書く。政治・事件・事故・災害・訃報・不祥事は選ばない。');
   if (recent && recent.length) {
     lines.push('直近の投稿（言い回し・話題・書き出しを変える。同じ文は書かない）:');
     recent.forEach((r, i) => lines.push(`${i + 1}. ${String(r).replace(/\n/g, ' ')}`));
@@ -122,19 +142,23 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic, phot
   const model = env.THREADS_MODEL || DEFAULT_MODEL;
   const reasons = [];
   let lastReason = '';
+  const isNews = type === 'news';
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const res = await anthropic.messages.create({
-      model,
-      max_tokens: MAX_TOKENS,
-      output_config: { effort: 'medium' },
-      system: persona.SYSTEM,
-      messages: [{ role: 'user', content: userContent({ type, recent, dateKey, reasons, photo }) }],
-    });
+    const messages = [{ role: 'user', content: userContent({ type, recent, dateKey, reasons, photo }) }];
+    const req = { model, max_tokens: MAX_TOKENS, output_config: { effort: 'medium' }, system: persona.SYSTEM, messages };
+    if (isNews) req.tools = [WEB_SEARCH_TOOL]; // 時事は検索で確かめる（作り話を防ぐ）
+    let res = await anthropic.messages.create(req);
+    // 検索の途中で止まった（pause_turn）ら、返ってきた content を assistant として足して続きを頼む
+    for (let k = 0; k < MAX_CONTINUES && res.stop_reason === 'pause_turn'; k++) {
+      messages.push({ role: 'assistant', content: res.content });
+      res = await anthropic.messages.create({ ...req, messages });
+    }
     const raw = (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-    const text = cleanOutput(raw);
+    const { body, tag } = splitTag(cleanOutput(raw), type);
+    const text = body;
     // 途中で切れた案（stop_reason=max_tokens）は空でなくても使わない
     const c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : checkText(text, { banned, recent, minChars: photo ? MIN_CHARS : MIN_CHARS_TEXT_ONLY });
-    if (c.ok) return { ok: true, text, type, attempts: attempt };
+    if (c.ok) return { ok: true, text, type, attempts: attempt, tag };
     lastReason = c.reason;
     reasons.push(c.reason);
     console.warn(`[threads] WRITE_REJECTED attempt=${attempt} reason=${c.reason}`);

@@ -30,11 +30,12 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
   /**
    * @returns {Promise<{ok:true, mediaId, permalink}|{ok:false, error, stage}>}
    */
-  async function publishPost({ token, userId, text, imageUrl = null }) {
+  async function publishPost({ token, userId, text, imageUrl = null, topicTag = null }) {
     let containerId;
     try {
       const params = { media_type: imageUrl ? 'IMAGE' : 'TEXT', text, access_token: token };
       if (imageUrl) params.image_url = imageUrl;
+      if (topicTag) params.topic_tag = String(topicTag).replace(/[#＃.&]/g, '').slice(0, 50); // Threads のトピックタグ（1 つ。. と & は不可）
       containerId = (await post(`/${userId}/threads`, params)).id;
       if (!containerId) return { ok: false, stage: 'container', error: 'コンテナ ID が返らなかった' };
     } catch (e) {
