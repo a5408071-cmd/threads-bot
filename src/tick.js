@@ -18,7 +18,7 @@ const TOKEN_ALERT_HOURS = 12;
 
 const daysLeft = (expiresAt, now) => Math.floor((new Date(expiresAt).getTime() - now.getTime()) / 86400000);
 
-async function runTick({ env = process.env, store, threads, writer = defaultWriter, notify, anthropic, now = () => new Date(), mode = 'live', replies = null, draw = null, photos = null, forcePhoto = false, forcePost = false }) {
+async function runTick({ env = process.env, store, threads, writer = defaultWriter, notify, anthropic, now = () => new Date(), mode = 'live', replies = null, draw = null, photos = null, forcePhoto = false, forcePost = false, forceType = null }) {
   const t = now();
   const dateKey = slots.jstDateKey(t);
   const out = { ok: true, mode, dateKey, slots: null, due: null, posted: [], skipped: [], preview: null, token: null, replies: null, autoPost: env.THREADS_AUTO_POST !== 'false', errors: [] };
@@ -75,7 +75,7 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
   };
   const compose = async () => {
     const recent = await store.recentPosts(RECENT_POSTS);
-    const type = writer.pickType(recent.slice(0, RECENT_TYPES).map((p) => p.type), t);
+    const type = forceType || writer.pickType(recent.slice(0, RECENT_TYPES).map((p) => p.type), t);
     const photo = await pickPhoto(Boolean(recent[0] && recent[0].photoId));
     const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo });
     return { ...w, photo };

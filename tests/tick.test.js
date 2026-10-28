@@ -295,3 +295,10 @@ test('タグ: writer の tag を topicTag として投稿し、記録と写し�
   expect(r.posted[0]).toMatchObject({ tag: '名古屋' });
   expect(d.notify.owner.mock.calls[0][0]).toMatch(/#名古屋/);
 });
+
+test('forceType: dry/test で型を指定できる（?type=news の確認用）', async () => {
+  const d = await withToken(deps({ mode: 'dry' }));
+  await runTick({ ...d, forceType: 'news' });
+  expect(d.writer.pickType).not.toHaveBeenCalled();
+  expect(d.writer.writePost.mock.calls[0][0].type).toBe('news');
+});
