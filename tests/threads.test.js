@@ -195,7 +195,7 @@ describe('成長の仕組み（2026-10-28 社長「1か月以内でフォロワ�
   test('authorizeUrl の scope に insights と manage_replies が入る', () => {
     const t = createThreads({ http: http([]), env: { THREADS_APP_ID: 'app' }, sleep: noSleep });
     const u = new URL(t.authorizeUrl({ redirectUri: 'https://x/cb', state: 'st' }));
-    expect(u.searchParams.get('scope').split(',')).toEqual(expect.arrayContaining(['threads_basic', 'threads_content_publish', 'threads_read_replies', 'threads_manage_replies', 'threads_manage_insights']));
+    expect(u.searchParams.get('scope').split(',')).toEqual(expect.arrayContaining(['threads_basic', 'threads_content_publish', 'threads_read_replies', 'threads_manage_replies', 'threads_manage_insights', 'threads_keyword_search']));
   });
 });
 

@@ -8,7 +8,7 @@ const ROOT = 'https://graph.threads.net';
 const BASE = `${ROOT}/v1.0`;
 const AUTHORIZE = 'https://threads.net/oauth/authorize';
 // 2026-10-28 社長「フォロワー500人」で insights（数字）と manage_replies（コメントへの返事）を追加。足したら社長が /oauth/start で接続し直す
-const SCOPES = ['threads_basic', 'threads_content_publish', 'threads_read_replies', 'threads_manage_replies', 'threads_manage_insights'];
+const SCOPES = ['threads_basic', 'threads_content_publish', 'threads_read_replies', 'threads_manage_replies', 'threads_manage_insights', 'threads_keyword_search'];
 const POST_METRICS = ['views', 'likes', 'replies', 'reposts', 'quotes'];
 const STATUS_POLL_MS = 5000;
 const STATUS_TIMEOUT_MS = 60000;
