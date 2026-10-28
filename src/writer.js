@@ -180,11 +180,13 @@ async function photoFits({ text, bytes, mediaType = 'image/jpeg', env = {}, anth
       max_tokens: 50,
       messages: [{ role: 'user', content: [
         { type: 'image', source: { type: 'base64', media_type: mediaType, data: Buffer.from(bytes).toString('base64') } },
-        { type: 'text', text: `次の投稿文に添える写真として、この写真は自然に合いますか？ 文に出てくる物・季節・場面と写真の中身が食い違っていれば no。\n\n投稿文:\n${text}\n\n答えは yes か no の 1 語だけ。` },
+        { type: 'text', text: `次の投稿文に添える写真として、この写真を使ってよいですか？ 完全に一致している必要はなく、話題や季節の雰囲気が合っていて読む人が違和感を持たなければ yes。文に出てくる物と写真の中身が明らかに別物（焼き芋の話にじゃがいも炒め、など）、季節が真逆、人の顔が大きく写っている、文字や広告が入っている、なら no。\n\n投稿文:\n${text}\n\n答えは yes か no の 1 語だけ（日本語なら はい／いいえ）。` },
       ] }],
     });
     const out = (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join(' ').trim().toLowerCase();
-    return /^yes\b/.test(out);
+    const fits = /^(yes|はい|合う|合います|ok|使える|使えます)/.test(out.replace(/^[\s「"'*]+/, ''));
+    console.log(`[threads] PHOTO_FIT answer="${out.slice(0, 40)}" fits=${fits}`);
+    return fits;
   } catch (e) {
     console.warn(`[threads] PHOTO_FIT_FAILED ${e.message}`);
     return false;

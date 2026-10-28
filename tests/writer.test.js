@@ -227,3 +227,15 @@ test('photoFits: 写真と本文を安いモデルに見せて yes/no で判定�
   expect(call.messages[0].content.find((b) => b.type === 'image')).toBeTruthy();
   expect(JSON.stringify(call.messages)).toMatch(/焼き芋の話/);
 });
+
+test('photoFits: 「はい」「合う」「yes.」も yes 扱い。「いいえ」「no」は false', async () => {
+  const { photoFits } = require('../src/writer');
+  const a = fakeAnthropic(['はい', '合います', 'Yes.', 'いいえ', 'no']);
+  const args = { text: 't', bytes: Buffer.from('x'), mediaType: 'image/jpeg', env: {}, anthropic: a };
+  expect(await photoFits(args)).toBe(true);
+  expect(await photoFits(args)).toBe(true);
+  expect(await photoFits(args)).toBe(true);
+  expect(await photoFits(args)).toBe(false);
+  expect(await photoFits(args)).toBe(false);
+  expect(JSON.stringify(a.messages.create.mock.calls[0][0].messages)).toMatch(/雰囲気/);
+});
