@@ -370,3 +370,14 @@ test('ストック写真は writer.photoFits で確かめてから付ける（st
   expect(photoFits).toHaveBeenCalledWith(expect.objectContaining({ text: '焼き芋の話', bytes: Buffer.from('img') }));
   expect(d.threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ imageUrl: 'u' }));
 });
+
+test('ストック写真の検索語が「a | b」なら、a で見つからなければ b で探す', async () => {
+  const writePost = jest.fn(async () => ({ ok: true, text: '鍋の話', type: 'daily', attempts: 1, tag: '日常', photoQuery: 'hot pot dinner | cozy autumn evening' }));
+  const d = await withToken(deps({ writer: { pickType: () => 'daily', writePost, photoFits: async () => true } }));
+  for (let i = 0; i < 3; i++) await d.store.savePost({ mediaId: 'prev' + i, text: 'p', type: 'hook', source: 'auto', postedAt: new Date(2026, 9, 20, i).toISOString() });
+  const search = jest.fn(async (q) => (q === 'cozy autumn evening' ? { id: 'pixabay:2', url: 'u2', name: 'Pixabay: Bob', page: '', photographer: 'Bob' } : null));
+  d.stock = { search };
+  await runTick(d);
+  expect(search.mock.calls.map((c) => c[0])).toEqual(['hot pot dinner', 'cozy autumn evening']);
+  expect(d.threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ imageUrl: 'u2' }));
+});

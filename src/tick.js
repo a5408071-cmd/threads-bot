@@ -90,7 +90,9 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
     const stockPhoto = wantPhoto && !photo; // 社長の写真が無い（またはゴルフ以外）→ 文を先に書いて検索語をもらう
     const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo, stockPhoto });
     if (w.ok && stockPhoto) {
-      const s = await pickStock(w.photoQuery, w.text);
+      // 検索語は「a | b」で 2 つまで。a で見つからなければ b（日本独特の話題は海外のストックに無いことが多い）
+      let s = null;
+      for (const q of String(w.photoQuery || '').split('|').map((x) => x.trim()).filter(Boolean).slice(0, 2)) { s = await pickStock(q, w.text); if (s) break; }
       if (s) photo = { id: s.id, name: s.name, url: s.url, stock: true, page: s.page };
     }
     return { ...w, photo };
