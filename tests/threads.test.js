@@ -198,3 +198,12 @@ describe('成長の仕組み（2026-10-28 社長「1か月以内でフォロワ�
     expect(u.searchParams.get('scope').split(',')).toEqual(expect.arrayContaining(['threads_basic', 'threads_content_publish', 'threads_read_replies', 'threads_manage_replies', 'threads_manage_insights']));
   });
 });
+
+test('keywordSearch は /keyword_search を q と search_type で呼び、投稿の一覧を返す', async () => {
+  const h = http([{ match: /\/keyword_search$/, reply: { data: [{ id: 'k1', text: 'ゴルフ行きたい', username: 'ann', permalink: 'pk1', timestamp: 't', media_type: 'TEXT', has_replies: false, is_reply: false }] } }]);
+  const t = createThreads({ http: h, env: {}, sleep: noSleep });
+  const r = await t.keywordSearch({ token: 'tk', q: 'ゴルフ', type: 'RECENT' });
+  expect(r).toEqual([{ id: 'k1', text: 'ゴルフ行きたい', username: 'ann', permalink: 'pk1', timestamp: 't', isReply: false }]);
+  expect(h.calls[0].opts).toMatchObject({ q: 'ゴルフ', search_type: 'RECENT', access_token: 'tk' });
+  expect(h.calls[0].opts.fields).toMatch(/id,text,username,permalink,timestamp/);
+});

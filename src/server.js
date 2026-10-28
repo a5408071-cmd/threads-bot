@@ -188,6 +188,38 @@ function createApp(deps = {}) {
   app.get('/data-deletion', (req, res) => res.type('html').send(pages.DELETION));
   app.post('/data-deletion', (req, res) => res.json({ url: `${String(env.PUBLIC_BASE_URL || '').replace(/\/+$/, '')}/data-deletion`, confirmation_code: `del-${Date.now()}` })); // Meta の「データ削除コールバック」の形
 
+  // 審査の画面録画用のデモ画面（docs/app-review.md）。鍵付き
+  app.get('/demo', (req, res) => {
+    if (!gate(req, res)) return;
+    res.type('html').send(require('./demo').demoHtml({ base: String(env.PUBLIC_BASE_URL || '').replace(/\/+$/, ''), key: String(req.query.key || '') }));
+  });
+  app.get('/demo/search', async (req, res) => {
+    if (!gate(req, res)) return;
+    try {
+      const tok = await getStore().getToken();
+      if (!tok || !tok.token) return res.status(503).json({ ok: false, error: '鍵なし（先にログイン）' });
+      const posts = await getThreads().keywordSearch({ token: tok.token, q: String(req.query.q || ''), type: 'RECENT' });
+      res.json({ ok: true, posts });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: require('./threads').metaError(e) });
+    }
+  });
+  app.post('/demo/reply', async (req, res) => {
+    if (!gate(req, res)) return;
+    try {
+      const tok = await getStore().getToken();
+      if (!tok || !tok.token) return res.status(503).json({ ok: false, error: '鍵なし（先にログイン）' });
+      const body = (req.body && typeof req.body === 'object') ? req.body : {};
+      const text = String(body.text || '').trim();
+      const replyToId = String(body.replyToId || '').trim();
+      if (!text || !replyToId) return res.status(400).json({ ok: false, error: '本文と返信先が要ります' });
+      const r = await getThreads().publishReply({ token: tok.token, userId: tok.userId, text, replyToId });
+      res.status(r.ok ? 200 : 500).json(r);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   // 成長の仕組みを今すぐ走らせる（確認用。?daily=1 / ?weekly=1）
   app.get('/admin/growth', async (req, res) => {
     if (!gate(req, res)) return;

@@ -103,6 +103,12 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
     return (r.data || []).map((x) => ({ id: x.id, text: x.text, username: x.username, timestamp: x.timestamp, permalink: x.permalink, is_reply_owned_by_me: Boolean(x.is_reply_owned_by_me) }));
   }
 
+  /** 公開投稿のキーワード検索（threads_keyword_search。審査前は自分の投稿しか返らない） */
+  async function keywordSearch({ token, q, type = 'RECENT' }) {
+    const r = await get('/keyword_search', { q, search_type: type, fields: 'id,text,username,permalink,timestamp,media_type,has_replies,is_reply', access_token: token });
+    return (r.data || []).map((p) => ({ id: p.id, text: p.text, username: p.username, permalink: p.permalink, timestamp: p.timestamp, isReply: Boolean(p.is_reply) }));
+  }
+
   /** コメントへの返事（reply_to_id 付きの投稿） */
   function publishReply({ token, userId, text, replyToId }) {
     return publishPost({ token, userId, text, replyToId });
@@ -151,7 +157,7 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
     return u.toString();
   }
 
-  return { publishPost, publishReply, userInsights, postInsights, exchangeCode, refreshToken, listMyPosts, listReplies, authorizeUrl, whoAmI };
+  return { publishPost, publishReply, userInsights, postInsights, keywordSearch, exchangeCode, refreshToken, listMyPosts, listReplies, authorizeUrl, whoAmI };
 }
 
 module.exports = { createThreads, BASE, SCOPES, metaError };

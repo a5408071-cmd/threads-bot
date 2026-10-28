@@ -155,3 +155,25 @@ describe('/admin/growth と審査用の固定ページ', () => {
     }
   });
 });
+
+describe('審査の画面録画用のデモ画面 /demo（鍵付き）', () => {
+  const { memoryStore } = require('../src/store');
+  test('鍵が無いと 403。鍵があれば検索フォームの HTML。/demo/search は keywordSearch、/demo/reply は publishReply', async () => {
+    const store = memoryStore();
+    await store.setToken({ token: 'tk', userId: 'u1', expiresAt: '2026-12-20T00:00:00.000Z' });
+    const threads = {
+      keywordSearch: jest.fn(async () => [{ id: 'k1', text: 'ゴルフ行きたい', username: 'ann', permalink: 'pk1', timestamp: 't', isReply: false }]),
+      publishReply: jest.fn(async () => ({ ok: true, mediaId: 'r1', permalink: 'pr1' })),
+    };
+    const app = createApp({ env: { CRON_KEY: 'k', PUBLIC_BASE_URL: 'https://tb.example' }, store, threads });
+    await request(app).get('/demo').expect(403);
+    const r = await request(app).get('/demo?key=k').expect(200);
+    expect(r.text).toMatch(/Threads でログイン/); expect(r.text).toMatch(/検索/);
+    const s = await request(app).get('/demo/search?key=k&q=ゴルフ').expect(200);
+    expect(s.body.posts).toEqual([expect.objectContaining({ id: 'k1', username: 'ann' })]);
+    expect(threads.keywordSearch).toHaveBeenCalledWith({ token: 'tk', q: 'ゴルフ', type: 'RECENT' });
+    const p = await request(app).post('/demo/reply?key=k').send({ replyToId: 'k1', text: 'いいですね！' }).expect(200);
+    expect(p.body).toMatchObject({ ok: true, permalink: 'pr1' });
+    expect(threads.publishReply).toHaveBeenCalledWith({ token: 'tk', userId: 'u1', text: 'いいですね！', replyToId: 'k1' });
+  });
+});
