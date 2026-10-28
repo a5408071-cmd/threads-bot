@@ -271,3 +271,18 @@ test('forcePost: 枠に関係なく今すぐ 1 本書いて投稿する（枠は
   expect((await d.store.recentPosts(1))[0]).toMatchObject({ source: 'auto', photoId: 'P1' });
   expect(d.notify.owner.mock.calls[0][0]).toMatch(/投稿しました/);
 });
+
+test('写真は 2 本に 1 本: 直前の投稿に写真があれば今回は付けない、無ければ付ける（2026-10-28 社長「2つに1回は画像なしで」）', async () => {
+  const photo = { id: 'P1', name: 'a.jpg', url: 'u', mediaType: 'image/jpeg', bytes: Buffer.from('x') };
+  const d1 = await withToken(deps());
+  await d1.store.savePost({ mediaId: 'prev', text: 'p', type: 'hook', source: 'auto', photoId: 'P0', postedAt: '2026-10-27T10:00:00.000Z' });
+  d1.photos = { shouldAttach: () => true, pick: jest.fn(async () => photo) };
+  await runTick(d1);
+  expect(d1.photos.pick).not.toHaveBeenCalled();
+  expect(d1.writer.writePost.mock.calls[0][0].photo).toBeNull();
+  const d2 = await withToken(deps());
+  await d2.store.savePost({ mediaId: 'prev', text: 'p', type: 'hook', source: 'auto', postedAt: '2026-10-27T10:00:00.000Z' });
+  d2.photos = { shouldAttach: () => false, pick: jest.fn(async () => photo) };
+  await runTick(d2);
+  expect(d2.photos.pick).toHaveBeenCalled();
+});

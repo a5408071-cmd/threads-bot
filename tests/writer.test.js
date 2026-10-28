@@ -118,3 +118,26 @@ test('writePost: 写真を渡すと user に画像ブロックと「写ってい
   const txt = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
   expect(txt).toMatch(/写真/); expect(txt).toMatch(/いつ|どこ/);
 });
+
+test('写真なしの回は短めの指示（100〜180字）、写真ありは 150〜300字。どちらも「募集・一杯で締めない」の指示が入る', async () => {
+  const a = fakeAnthropic([LONG, LONG]);
+  await writePost({ type: 'aruaru', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
+  const u1 = JSON.stringify(a.messages.create.mock.calls[0][0].messages);
+  expect(u1).toMatch(/100〜180字/);
+  await writePost({ type: 'aruaru', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a, photo: { id: 'P', name: 'a.jpg', mediaType: 'image/jpeg', bytes: Buffer.from('x') } });
+  const u2 = JSON.stringify(a.messages.create.mock.calls[1][0].messages);
+  expect(u2).toMatch(/150〜300字/);
+  const sys = String(a.messages.create.mock.calls[0][0].system);
+  expect(sys).toMatch(/誘い型だけ/);
+});
+
+test('写真なしの最低字数は 80 字（写真ありは 120 字）', async () => {
+  const short = 'ゴルフ場選び、景色派ですか？スコア派ですか？僕は完全に景色派で、山が見えるホールに立つだけでテンション上がります笑'; // 約 60 字
+  const mid = short + 'みなさんはどっち派か、よかったら教えてください！'; // 約 85 字
+  const a = fakeAnthropic([short, mid]);
+  const r = await writePost({ type: 'question', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
+  expect(r).toMatchObject({ ok: true, attempts: 2, text: mid });
+  const b = fakeAnthropic([mid, LONG]);
+  const r2 = await writePost({ type: 'question', recent: [], dateKey: '2026-10-28', env: {}, anthropic: b, photo: { id: 'P', name: 'a.jpg', mediaType: 'image/jpeg', bytes: Buffer.from('x') } });
+  expect(r2).toMatchObject({ ok: true, attempts: 2, text: LONG });
+});

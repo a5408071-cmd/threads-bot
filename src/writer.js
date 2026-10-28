@@ -7,7 +7,10 @@ const persona = require('./persona');
 const TYPES = ['question', 'aruaru', 'invite', 'season', 'small', 'hook'];
 const MAX_ATTEMPTS = 3;
 const MAX_CHARS = 500;
-const MIN_CHARS = 120; // 短すぎる案は書き直させる（2026-10-27 社長「文章短すぎ！」）
+const MIN_CHARS = 120; // 写真ありの最低字数（2026-10-27 社長「文章短すぎ！」）
+const MIN_CHARS_TEXT_ONLY = 80; // 写真なしは短めでシンプルに（2026-10-28 社長「2つに1回は画像なしで文字だけシンプルに」）
+const LENGTH_WITH_PHOTO = '150〜300字・3〜6文';
+const LENGTH_TEXT_ONLY = '100〜180字・2〜4文。写真が無い回なのでシンプルに、言いたいことを1つに絞る';
 const SIMILARITY_LIMIT = 0.6;
 const DEFAULT_MODEL = 'claude-opus-5-5';
 const MAX_TOKENS = 8000; // thinking の分も数えられるので小さいと本文が途中で切れる（iso-bot の中部経済新聞で 3000〜8000 で切れた実績）
@@ -83,7 +86,7 @@ function cleanOutput(raw) {
   return t;
 }
 
-function userPrompt({ type, recent, dateKey, reasons }) {
+function userPrompt({ type, recent, dateKey, reasons, photo = null }) {
   const lines = [
     `今日: ${dateKey}（${WEEKDAYS[jstWeekday(dateKey)]}曜日）`,
     `型: ${type} … ${persona.TYPE_GUIDE[type] || ''}`,
@@ -95,6 +98,8 @@ function userPrompt({ type, recent, dateKey, reasons }) {
   if (reasons && reasons.length) {
     lines.push(`前の案は次の理由で使えませんでした。直して書き直してください: ${reasons.join(' / ')}`);
   }
+  lines.push(`長さ: ${photo ? LENGTH_WITH_PHOTO : LENGTH_TEXT_ONLY}`);
+  lines.push('直近の投稿と同じ締め方（誘い・募集・一杯）や同じ自己紹介を繰り返さない。');
   lines.push('本文だけを返してください。');
   return lines.join('\n');
 }
@@ -104,7 +109,7 @@ function userPrompt({ type, recent, dateKey, reasons }) {
  */
 /** 写真を添えるときの user content（画像ブロック＋指示） */
 function userContent({ type, recent, dateKey, reasons, photo }) {
-  const text = userPrompt({ type, recent, dateKey, reasons });
+  const text = userPrompt({ type, recent, dateKey, reasons, photo });
   if (!photo || !photo.bytes) return text;
   return [
     { type: 'image', source: { type: 'base64', media_type: photo.mediaType || 'image/jpeg', data: Buffer.from(photo.bytes).toString('base64') } },
@@ -128,7 +133,7 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic, phot
     const raw = (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
     const text = cleanOutput(raw);
     // 途中で切れた案（stop_reason=max_tokens）は空でなくても使わない
-    const c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : checkText(text, { banned, recent, minChars: MIN_CHARS });
+    const c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : checkText(text, { banned, recent, minChars: photo ? MIN_CHARS : MIN_CHARS_TEXT_ONLY });
     if (c.ok) return { ok: true, text, type, attempts: attempt };
     lastReason = c.reason;
     reasons.push(c.reason);

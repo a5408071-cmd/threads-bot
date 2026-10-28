@@ -67,14 +67,16 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
   const canPost = Boolean(token && token.token);
 
   // 写真（本物の写真を Drive からランダムに。取れなければ写真なしで続ける）
-  const pickPhoto = async () => {
-    if (!photos || (!forcePhoto && !photos.shouldAttach())) return null;
+  // 写真は 2 本に 1 本（直前の投稿に写真があれば今回は無し。2026-10-28 社長「2つに1回は画像なしで文字だけシンプルに」）
+  const pickPhoto = async (lastHadPhoto) => {
+    if (!photos) return null;
+    if (!forcePhoto && lastHadPhoto) return null;
     try { return await photos.pick(); } catch (e) { console.warn(`[threads] PHOTO_PICK_THROW ${e.message}`); return null; }
   };
   const compose = async () => {
     const recent = await store.recentPosts(RECENT_POSTS);
     const type = writer.pickType(recent.slice(0, RECENT_TYPES).map((p) => p.type), t);
-    const photo = await pickPhoto();
+    const photo = await pickPhoto(Boolean(recent[0] && recent[0].photoId));
     const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo });
     return { ...w, photo };
   };
