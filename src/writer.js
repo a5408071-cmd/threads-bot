@@ -4,8 +4,8 @@
  */
 const persona = require('./persona');
 
-const TYPES = ['question', 'aruaru', 'invite', 'season', 'small', 'hook', 'daily', 'news'];
-const NON_GOLF = ['daily', 'news']; // ゴルフ以外（2026-10-28 社長「ゴルフ以外の季節とか時事とか関係ない話も」）。重みを 2 倍にして 3 回に 1 回くらい
+const TYPES = ['question', 'aruaru', 'invite', 'season', 'small', 'hook', 'work', 'fitness', 'daily', 'news'];
+const NON_GOLF = ['work', 'fitness', 'daily', 'news']; // ゴルフ以外（2026-10-28 社長「ゴルフ以外も」「経営者らしく」「マラソン・ジム」）。重みを 2 倍にして半分くらい
 const WEB_SEARCH_TOOL = { type: 'web_search_20260209', name: 'web_search', max_uses: 3 };
 const MAX_CONTINUES = 3; // pause_turn（検索の続き）の上限
 const TAG_MAX = 50;
@@ -34,7 +34,7 @@ function pickType(recentTypes = [], date = new Date(), rng = Math.random) {
   let pool = TYPES.filter((t) => !avoid.has(t));
   if (!pool.length) pool = TYPES.slice();
   const wd = jstWeekday(date);
-  if ([5, 6, 0].includes(wd) && pool.includes('invite')) pool = [...pool, 'invite'];
+  if ([5, 6, 0].includes(wd) && pool.includes('invite')) pool = [...pool, 'invite', 'invite']; // 金土日は誘い型を 3 倍に
   for (const t of NON_GOLF) if (pool.includes(t)) pool = [...pool, t];
   return pool[Math.floor(rng() * pool.length)];
 }
@@ -123,7 +123,7 @@ function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto =
   }
   lines.push(`長さ: ${photo ? LENGTH_WITH_PHOTO : LENGTH_TEXT_ONLY}`);
   lines.push('直近の投稿と同じ締め方（誘い・募集・一杯）や同じ自己紹介を繰り返さない。');
-  if (stockPhoto) lines.push('この投稿には、あとから写真サイト（Pixabay）で探した本物の写真を 1 枚付けます。本文の内容に合う写真を探す英語の検索語（2〜4 語。例: roasted sweet potato autumn / autumn golf course morning / highball glass bar）を、タグの行の前に「写真: <具体的な検索語> | <広めの検索語>」の 1 行で書いてください（2 つを | で区切る。1 つ目で見つからなければ 2 つ目で探す。例: yakiimo roasted sweet potato | autumn street food japan）。写真サイトは海外のものが中心なので、日本独特のもの（鍋・おでん・居酒屋）は 2 つ目を雰囲気寄り（cozy autumn dinner table）にする。本文は写真の説明にはしない。');
+  if (stockPhoto) lines.push('この投稿には、あとから写真サイト（Pixabay）で探した本物の写真を 1 枚付けます。本文の内容に合う写真を探す英語の検索語（2〜4 語。例: roasted sweet potato autumn / autumn golf course morning / highball glass bar）を、タグの行の前に「写真: <具体的な検索語> | <広めの検索語>」の 1 行で書いてください（2 つを | で区切る。1 つ目で見つからなければ 2 つ目で探す。例: yakiimo roasted sweet potato | autumn street food japan）。写真サイトは海外のものが中心なので、2 つ目は雰囲気寄り（例: morning run city sunrise / rooftop bar night / modern office desk coffee）にする。キラキラして前向きな雰囲気の写真になる語を選ぶ（生活感のある料理・台所は避ける）。本文は写真の説明にはしない。');
   lines.push('本文だけを返してください。');
   return lines.join('\n');
 }

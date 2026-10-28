@@ -248,3 +248,23 @@ test('photoFits: 考える工程の分も出力枠に入るので max_tokens は
   expect(call.max_tokens).toBeGreaterThanOrEqual(1000);
   expect(call.output_config).toEqual({ effort: 'low' });
 });
+
+describe('人物像の追加（2026-10-28 本人「キラキラしてて楽しい感じ」「経営者らしく仕事も生きがい」「12月ホノルルマラソン」「パーソナルで細マッチョ」「ストイックだけど酒は飲みすぎ」）', () => {
+  test('型に work（仕事）と fitness（運動）があり、ゴルフ以外が半分くらい出る', () => {
+    expect(TYPES).toEqual(expect.arrayContaining(['work', 'fitness']));
+    let n = 0;
+    for (let i = 0; i < 3000; i++) if (['daily', 'news', 'work', 'fitness'].includes(pickType([], new Date('2026-10-28T03:00:00Z'), Math.random))) n++;
+    expect(n).toBeGreaterThan(1200); expect(n).toBeLessThan(1900);
+  });
+  test('system にマラソン・ジム・仕事の生きがい・飲みすぎ・キラキラ・生活感NG が入る', async () => {
+    const a = fakeAnthropic([LONG]);
+    await writePost({ type: 'work', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
+    const sys = String(a.messages.create.mock.calls[0][0].system);
+    for (const w of ['ホノルルマラソン', 'パーソナル', '細マッチョ', '生きがい', '飲みすぎ', 'キラキラ', '焼き芋']) expect(sys).toContain(w);
+  });
+  test('既定タグに work=経営者の日常、fitness=ホノルルマラソン', async () => {
+    const a = fakeAnthropic([LONG, LONG]);
+    expect((await writePost({ type: 'work', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a })).tag).toBe('経営者の日常');
+    expect((await writePost({ type: 'fitness', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a })).tag).toBe('ホノルルマラソン');
+  });
+});

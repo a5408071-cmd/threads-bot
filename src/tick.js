@@ -14,7 +14,7 @@ const defaultWriter = require('./writer');
 const RECENT_POSTS = 14;
 const RECENT_TYPES = 2;
 const PHOTO_EVERY = 4;
-const STOCK_TYPES = ['daily', 'news', 'season']; // ゴルフ以外＝ストック写真
+const STOCK_TYPES = ['daily', 'news', 'season', 'work', 'fitness']; // ゴルフ以外＝ストック写真（社長の写真はゴルフの型だけ）
 const REFRESH_BEFORE_DAYS = 10;
 const TOKEN_ALERT_HOURS = 12;
 
