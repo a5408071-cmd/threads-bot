@@ -381,3 +381,26 @@ test('ストック写真の検索語が「a | b」なら、a で見つからな�
   expect(search.mock.calls.map((c) => c[0])).toEqual(['hot pot dinner', 'cozy autumn evening']);
   expect(d.threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ imageUrl: 'u2' }));
 });
+
+describe('成長の仕組みのつなぎ（growth）', () => {
+  test('毎朝 7:00〜7:09 の見回りで growth.daily、月曜なら weekly も。型の配分は growth.weightsFor を pickType に渡す', async () => {
+    const growth = { daily: jest.fn(async () => ({ ok: true, followers: 10, updated: 0, errors: [] })), weekly: jest.fn(async () => ({ ok: true })), weightsFor: jest.fn(async () => ({ question: 9 })) };
+    const d1 = await withToken(deps({ now: at('07:05', '2026-11-02') })); // 月曜
+    const r1 = await runTick({ ...d1, growth, draw: () => ({ slots: ['09:17', '20:41'] }) });
+    expect(growth.daily).toHaveBeenCalledWith(expect.objectContaining({ token: 'tk' }));
+    expect(growth.weekly).toHaveBeenCalled();
+    expect(r1.growth).toMatchObject({ daily: { followers: 10 }, weekly: { ok: true } });
+    const d2 = await withToken(deps({ now: at('07:05', '2026-11-03') })); // 火曜
+    await runTick({ ...d2, growth: { ...growth, daily: jest.fn(async () => ({ ok: true })), weekly: jest.fn() }, draw: () => ({ slots: ['09:17'] }) });
+    const d3 = await withToken(deps({ now: at('09:20') }));
+    await runTick({ ...d3, growth });
+    expect(d3.writer.pickType.mock.calls[0][3]).toEqual({ question: 9 });
+  });
+  test('growth が投げても投稿は止めず errors に残す', async () => {
+    const growth = { daily: jest.fn(async () => { throw new Error('insights 403'); }), weekly: jest.fn(), weightsFor: jest.fn(async () => { throw new Error('x'); }) };
+    const d = await withToken(deps({ now: at('07:05', '2026-11-03') }));
+    const r = await runTick({ ...d, growth, draw: () => ({ slots: ['07:01'] }) });
+    expect(r.posted).toHaveLength(1);
+    expect(r.errors).toEqual([expect.stringMatching(/insights 403/)]);
+  });
+});

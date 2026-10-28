@@ -268,3 +268,10 @@ describe('人物像の追加（2026-10-28 本人「キラキラしてて楽し�
     expect((await writePost({ type: 'fitness', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a })).tag).toBe('ホノルルマラソン');
   });
 });
+
+test('pickType は weights（型ごとの重み）を渡せる。重み 0 の型は出ない', () => {
+  const weights = { question: 0, aruaru: 0, invite: 0, season: 0, small: 0, hook: 0, work: 0, fitness: 5, daily: 1, news: 0 };
+  const seen = new Set();
+  for (let i = 0; i < 300; i++) seen.add(pickType([], new Date('2026-10-28T03:00:00Z'), Math.random, weights));
+  expect([...seen].sort()).toEqual(['daily', 'fitness']);
+});

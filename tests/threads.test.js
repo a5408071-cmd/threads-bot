@@ -116,7 +116,7 @@ test('authorizeUrl に 3 つの scope と state', () => {
   expect(u.origin + u.pathname).toBe('https://threads.net/oauth/authorize');
   expect(u.searchParams.get('client_id')).toBe('app');
   expect(u.searchParams.get('redirect_uri')).toBe('https://x/oauth/callback');
-  expect(u.searchParams.get('scope')).toBe('threads_basic,threads_content_publish,threads_read_replies');
+  expect(u.searchParams.get('scope')).toMatch(/^threads_basic,threads_content_publish,threads_read_replies/);
   expect(u.searchParams.get('response_type')).toBe('code');
   expect(u.searchParams.get('state')).toBe('st');
 });
@@ -165,4 +165,36 @@ test('publishPost: topicTag を topic_tag として渡す', async () => {
   const t = createThreads({ http: h, env: {}, sleep: noSleep });
   await t.publishPost({ token: 'tk', userId: 'u1', text: 'x', topicTag: 'ゴルフ' });
   expect(h.calls[0].opts).toMatchObject({ topic_tag: 'ゴルフ' });
+});
+
+describe('成長の仕組み（2026-10-28 社長「1か月以内でフォロワー500人」）', () => {
+  test('userInsights は followers_count を返す', async () => {
+    const h = http([{ match: /\/me\/threads_insights$/, reply: { data: [{ name: 'followers_count', total_value: { value: 123 } }] } }]);
+    const t = createThreads({ http: h, env: {}, sleep: noSleep });
+    expect(await t.userInsights({ token: 'tk' })).toEqual({ followers: 123 });
+    expect(h.calls[0].opts).toMatchObject({ metric: 'followers_count', access_token: 'tk' });
+  });
+  test('postInsights は views/likes/replies/reposts/quotes を数で返す（無い指標は 0）', async () => {
+    const h = http([{ match: /\/m1\/insights$/, reply: { data: [{ name: 'views', values: [{ value: 500 }] }, { name: 'likes', values: [{ value: 12 }] }, { name: 'replies', values: [{ value: 3 }] }] } }]);
+    const t = createThreads({ http: h, env: {}, sleep: noSleep });
+    expect(await t.postInsights({ token: 'tk', mediaId: 'm1' })).toEqual({ views: 500, likes: 12, replies: 3, reposts: 0, quotes: 0 });
+    expect(h.calls[0].opts.metric).toBe('views,likes,replies,reposts,quotes');
+  });
+  test('publishReply は reply_to_id 付きでコンテナ→publish', async () => {
+    const h = http([
+      { match: /\/u1\/threads$/, reply: { id: 'c9' } },
+      { match: /\/c9$/, reply: { status: 'FINISHED' } },
+      { match: /\/u1\/threads_publish$/, reply: { id: 'r9' } },
+      { match: /\/r9$/, reply: { permalink: 'pr' } },
+    ]);
+    const t = createThreads({ http: h, env: {}, sleep: noSleep });
+    const r = await t.publishReply({ token: 'tk', userId: 'u1', text: 'ありがとうございます！', replyToId: 'cmt1' });
+    expect(r).toEqual({ ok: true, mediaId: 'r9', permalink: 'pr' });
+    expect(h.calls[0].opts).toMatchObject({ media_type: 'TEXT', text: 'ありがとうございます！', reply_to_id: 'cmt1' });
+  });
+  test('authorizeUrl の scope に insights と manage_replies が入る', () => {
+    const t = createThreads({ http: http([]), env: { THREADS_APP_ID: 'app' }, sleep: noSleep });
+    const u = new URL(t.authorizeUrl({ redirectUri: 'https://x/cb', state: 'st' }));
+    expect(u.searchParams.get('scope').split(',')).toEqual(expect.arrayContaining(['threads_basic', 'threads_content_publish', 'threads_read_replies', 'threads_manage_replies', 'threads_manage_insights']));
+  });
 });

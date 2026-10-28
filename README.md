@@ -25,6 +25,14 @@ AI は写真を見て写っているものに合う文を書く（いつ・ど�
 - ゴルフ以外の型（日常・季節・時事）→ **ストック写真（Pixabay。無料・商用可・クレジット不要）**。文を先に書き、AI が付けた「写真: <英語の検索語>」で検索し、横長の 1 枚を選ぶ（同じ写真は 180 日あける）。画像 URL を実際に開いて確かめてから Meta に渡す。鍵は `PIXABAY_API_KEY`（Secret `pixabay-api-key`）。鍵が無ければ写真なし
 - 文は「自分が撮った」とは書かない（「こういう季節が好き」の言い方）
 
+## 成長の仕組み（2026-10-28 社長「1か月以内でフォロワー500人」「どうすれば増えるかは日々自分で考えて」）
+
+- **毎朝 7:00〜7:09 の見回り**で `growth.daily`: フォロワー数（`/me/threads_insights?metric=followers_count`）と直近 7 日の投稿の数字（表示・いいね・返信・再投稿・引用）を Firestore に記録（`threads_metrics/<日付>`、`threads_posts.insights`）
+- **月曜**は `growth.weekly`: 直近 7 日を AI に見せて、型ごとの配分（`threads_config/strategy.weights`）と短い報告を作り、社長 DM へ。以後の投稿は `pickType` がその配分で型を選ぶ
+- **コメントへの返事は自動**（`THREADS_AUTO_REPLY=true`。`src/replies.js`）: 新しいコメントに人物像で 1〜2 文の返事を書いて投稿し、社長 DM に「コメント ↩ 返事」を並べて知らせる。営業・荒らし・意味不明は返事しない（AI が SKIP）
+- 権限 `threads_manage_insights`・`threads_manage_replies` が要る（`/oauth/start` で接続し直す。Meta のアプリ側でも権限を足す）
+- **他人の投稿へのコメント（検索して絡む）は未実装**: `/keyword_search` は Meta の App Review（審査）を通さないと自分の投稿しか検索できない（公式の記述）。審査は会社名での申請になる
+
 ## 話題とタグ
 
 型は 8 つ（質問・あるある・誘い・季節・小ネタ・問いかけ・**日常**・**時事**）。日常と時事はゴルフ以外で、3 回に 1 回くらい出る（2026-10-28 社長「ゴルフ以外の季節とか時事とか関係ない話も」）。
@@ -56,7 +64,8 @@ AI は写真を見て写っているものに合う文を書く（いつ・ど�
 | `THREADS_ENABLED` | `false` で全部止める（見回りも API も） |
 | `THREADS_AUTO_POST` | `false` で自動投稿だけ止める（イソからの投稿は残る） |
 | `THREADS_COPY_TO_OWNER` | `true` なら出した文の写しを社長 DM にも送る（最初の 1 週間だけ） |
-| `THREADS_PHOTO_FOLDER_ID` | 写真のフォルダ ID（写真は 2 本に 1 本） |
+| `THREADS_PHOTO_FOLDER_ID` | 写真のフォルダ ID（写真は 4 本に 1 本） |
+| `THREADS_AUTO_REPLY` | `true` でコメントに自動で返事（既定は知らせるだけ） |
 | `THREADS_SLOT_GRACE_MIN` | 枠の時刻を何分過ぎたら諦めるか（既定 60。止まっていた間の枠を深夜にまとめて出さないため） |
 | `TZ` | `Asia/Tokyo` |
 

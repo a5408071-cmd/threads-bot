@@ -103,3 +103,19 @@ test('photoLastUsed は最後に使った時刻（無ければ null）', async (
   await s.markPhotoUsed('P1');
   expect(await s.photoLastUsed('P1')).toBe('2026-10-28T00:00:00.000Z');
 });
+
+test('metrics: setMetric / getMetric / listMetrics（日付の昇順）', async () => {
+  const s = memoryStore();
+  await s.setMetric('2026-11-02', { followers: 42 });
+  await s.setMetric('2026-10-26', { followers: 12 });
+  expect(await s.getMetric('2026-11-02')).toMatchObject({ followers: 42 });
+  expect((await s.listMetrics(10)).map((m) => m.date)).toEqual(['2026-10-26', '2026-11-02']);
+});
+
+test('updatePost は投稿の記録に項目を足す（無い投稿は何もしない）', async () => {
+  const s = memoryStore();
+  await s.savePost({ mediaId: 'm1', text: 't', type: 'hook', source: 'auto', postedAt: '2026-11-01T00:00:00.000Z' });
+  await s.updatePost('m1', { insights: { views: 5 } });
+  expect((await s.recentPosts(1))[0]).toMatchObject({ text: 't', insights: { views: 5 } });
+  await expect(s.updatePost('none', { x: 1 })).resolves.toBeUndefined();
+});

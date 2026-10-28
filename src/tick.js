@@ -9,6 +9,7 @@
  * 失敗を 0 件に見せない: errors に残し、呼ぶ側が 500 にする。
  */
 const slots = require('./slots');
+const { WEEKLY_DAY } = require('./growth');
 const defaultWriter = require('./writer');
 
 const RECENT_POSTS = 14;
@@ -20,10 +21,10 @@ const TOKEN_ALERT_HOURS = 12;
 
 const daysLeft = (expiresAt, now) => Math.floor((new Date(expiresAt).getTime() - now.getTime()) / 86400000);
 
-async function runTick({ env = process.env, store, threads, writer = defaultWriter, notify, anthropic, now = () => new Date(), mode = 'live', replies = null, draw = null, photos = null, stock = null, forcePhoto = false, forcePost = false, forceType = null }) {
+async function runTick({ env = process.env, store, threads, writer = defaultWriter, notify, anthropic, now = () => new Date(), mode = 'live', replies = null, draw = null, photos = null, stock = null, growth = null, forcePhoto = false, forcePost = false, forceType = null }) {
   const t = now();
   const dateKey = slots.jstDateKey(t);
-  const out = { ok: true, mode, dateKey, slots: null, due: null, posted: [], skipped: [], preview: null, token: null, replies: null, autoPost: env.THREADS_AUTO_POST !== 'false', errors: [] };
+  const out = { ok: true, mode, dateKey, slots: null, due: null, posted: [], skipped: [], preview: null, token: null, replies: null, growth: null, autoPost: env.THREADS_AUTO_POST !== 'false', errors: [] };
   if (env.THREADS_ENABLED === 'false') return { ...out, disabled: true };
 
   const fail = (msg) => { out.errors.push(msg); out.ok = false; };
@@ -83,7 +84,9 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
   };
   const compose = async () => {
     const recent = await store.recentPosts(RECENT_POSTS);
-    const type = forceType || writer.pickType(recent.slice(0, RECENT_TYPES).map((p) => p.type), t);
+    let weights = null;
+    if (growth) { try { weights = await growth.weightsFor(); } catch (e) { console.warn(`[threads] WEIGHTS_FAILED ${e.message}`); } }
+    const type = forceType || writer.pickType(recent.slice(0, RECENT_TYPES).map((p) => p.type), t, Math.random, weights);
     const wantPhoto = forcePhoto || !recent.slice(0, photoEvery - 1).some((p) => p.photoId);
     const golf = !STOCK_TYPES.includes(type);
     let photo = wantPhoto && golf ? await pickPersonal() : null;
@@ -176,6 +179,19 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
         out.posted.push({ index: null, manual: true, mediaId: r.mediaId, permalink: r.permalink, type: w.type, ...(w.tag ? { tag: w.tag } : {}), ...(w.photo ? { photo: w.photo.name } : {}) });
         console.log(`[threads] POSTED manual type=${w.type} media=${r.mediaId} chars=${w.text.length}`);
         await tell(`📝 Threads に投稿しました（手動・${w.type}${w.photo ? `・📷 ${w.photo.name}` : ''}${w.tag ? `・#${w.tag}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
+      }
+    }
+  }
+
+  // 成長の仕組み（毎朝 7:00〜7:09 の見回りで数字を記録、月曜は週次の分析と報告）
+  if (growth && canPost && mode === 'live') {
+    const hm = slots.jstHm(t);
+    if (hm >= '07:00' && hm < '07:10') {
+      out.growth = {};
+      try { out.growth.daily = await growth.daily(token); } catch (e) { fail(`数字の記録でエラー: ${e.message}`); }
+      const wd = new Date(t.getTime() + 9 * 3600 * 1000).getUTCDay();
+      if (wd === WEEKLY_DAY) {
+        try { out.growth.weekly = await growth.weekly(token); } catch (e) { fail(`週次の分析でエラー: ${e.message}`); }
       }
     }
   }

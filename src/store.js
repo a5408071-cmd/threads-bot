@@ -15,6 +15,7 @@ const C = {
   config: 'threads_config',
   alerts: 'threads_alerts',
   photos: 'threads_photos',
+  metrics: 'threads_metrics',
 };
 
 function createStore(db, { now = () => new Date() } = {}) {
@@ -81,6 +82,27 @@ function createStore(db, { now = () => new Date() } = {}) {
   async function recentPosts(n = 14) {
     const snap = await col(C.posts).orderBy('postedAt', 'desc').limit(n).get();
     return snap.docs.map((d) => d.data());
+  }
+
+  /** 投稿の記録に項目を足す（insights など）。無い投稿は何もしない */
+  async function updatePost(mediaId, patch) {
+    const ref = col(C.posts).doc(String(mediaId));
+    const snap = await ref.get();
+    if (!snap || !snap.exists) return undefined;
+    await ref.set({ ...snap.data(), ...patch });
+    return undefined;
+  }
+
+  /** 日ごとの数字（threads_metrics/<YYYY-MM-DD>） */
+  async function setMetric(dateKey, m) {
+    await col(C.metrics).doc(dateKey).set({ ...m, date: dateKey });
+  }
+  async function getMetric(dateKey) {
+    return data(await col(C.metrics).doc(dateKey).get());
+  }
+  async function listMetrics(n = 30) {
+    const snap = await col(C.metrics).orderBy('date', 'desc').limit(n).get();
+    return snap.docs.map((d) => d.data()).reverse();
   }
 
   async function getToken() {
@@ -152,7 +174,7 @@ function createStore(db, { now = () => new Date() } = {}) {
     });
   }
 
-  return { getDay, ensureDay, claimSlot, releaseSlot, markPosted, markSkipped, savePost, recentPosts, getToken, setToken, getConfig, setConfig, seenReply, markReplySeen, alertDue, setOauthState, takeOauthState, photoUsedRecently, markPhotoUsed, photoLastUsed };
+  return { getDay, ensureDay, claimSlot, releaseSlot, markPosted, markSkipped, savePost, recentPosts, getToken, setToken, getConfig, setConfig, seenReply, markReplySeen, alertDue, setOauthState, takeOauthState, photoUsedRecently, markPhotoUsed, photoLastUsed, updatePost, setMetric, getMetric, listMetrics };
 }
 
 /** Firestore の使う部分だけを Map で真似る（テスト用）。createStore に渡すので本番と同じ経路を通る */

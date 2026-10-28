@@ -103,3 +103,44 @@ test('自分の返信は is_reply_owned_by_me でも除く（実際に頼んで�
   expect(notify.owner.mock.calls[0][0]).toMatch(/@bob/);
   expect(notify.owner.mock.calls[0][0]).not.toMatch(/自分の返事/);
 });
+
+describe('コメントへの自動返信（2026-10-28 社長「イソが自動で」）', () => {
+  function mkAuto({ answer = '嬉しいです！ぜひ一緒に回りましょう⛳' } = {}) {
+    const store = memoryStore({ now: () => NOW });
+    const threads = {
+      listMyPosts: jest.fn(async () => [P1]),
+      listReplies: jest.fn(async () => [{ id: 'r1', text: '平日行けます！', username: 'bob', timestamp: 't', permalink: 'pr1', is_reply_owned_by_me: false }]),
+      publishReply: jest.fn(async () => ({ ok: true, mediaId: 'rep1', permalink: 'prep' })),
+    };
+    const notify = { owner: jest.fn(async () => ({ ok: true })) };
+    const anthropic = { messages: { create: jest.fn(async () => ({ content: [{ type: 'text', text: answer }], stop_reason: 'end_turn' })) } };
+    const replies = createReplies({ threads, store, notify, now: () => NOW, anthropic, env: { THREADS_AUTO_REPLY: 'true' } });
+    return { replies, threads, notify, anthropic, store };
+  }
+  test('新しいコメントに AI が短い返事を書いて投稿し、社長 DM にはコメントと返事を並べて知らせる', async () => {
+    const { replies, threads, notify, store, anthropic } = mkAuto();
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    const r = await replies.poll({ token: 'tk', userId: 'u1' });
+    expect(threads.publishReply).toHaveBeenCalledWith({ token: 'tk', userId: 'u1', text: '嬉しいです！ぜひ一緒に回しましょう⛳'.replace('回し', '回り'), replyToId: 'r1' });
+    expect(r.replied).toBe(1);
+    const msg = notify.owner.mock.calls[0][0];
+    expect(msg).toMatch(/@bob/); expect(msg).toMatch(/平日行けます/); expect(msg).toMatch(/↩/); expect(msg).toMatch(/嬉しいです/);
+    const prompt = JSON.stringify(anthropic.messages.create.mock.calls[0][0]);
+    expect(prompt).toMatch(/平日行けます/); expect(prompt).toMatch(/名古屋/);
+  });
+  test('AI が「SKIP」と答えたら返事せず知らせだけ（営業・荒らし・意味不明）', async () => {
+    const { replies, threads, notify, store } = mkAuto({ answer: 'SKIP' });
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    const r = await replies.poll({ token: 'tk', userId: 'u1' });
+    expect(threads.publishReply).not.toHaveBeenCalled();
+    expect(r.replied).toBe(0);
+    expect(notify.owner.mock.calls[0][0]).toMatch(/返事なし/);
+  });
+  test('THREADS_AUTO_REPLY が true でなければ従来どおり知らせるだけ', async () => {
+    const { replies, threads, store } = mkAuto();
+    const r2 = createReplies({ threads, store, notify: { owner: jest.fn(async () => ({ ok: true })) }, now: () => NOW, anthropic: {}, env: {} });
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    await r2.poll({ token: 'tk', userId: 'u1' });
+    expect(threads.publishReply).not.toHaveBeenCalled();
+  });
+});

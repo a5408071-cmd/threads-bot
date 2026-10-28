@@ -7,7 +7,9 @@
 const ROOT = 'https://graph.threads.net';
 const BASE = `${ROOT}/v1.0`;
 const AUTHORIZE = 'https://threads.net/oauth/authorize';
-const SCOPES = ['threads_basic', 'threads_content_publish', 'threads_read_replies'];
+// 2026-10-28 社長「フォロワー500人」で insights（数字）と manage_replies（コメントへの返事）を追加。足したら社長が /oauth/start で接続し直す
+const SCOPES = ['threads_basic', 'threads_content_publish', 'threads_read_replies', 'threads_manage_replies', 'threads_manage_insights'];
+const POST_METRICS = ['views', 'likes', 'replies', 'reposts', 'quotes'];
 const STATUS_POLL_MS = 5000;
 const STATUS_TIMEOUT_MS = 60000;
 
@@ -30,12 +32,13 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
   /**
    * @returns {Promise<{ok:true, mediaId, permalink}|{ok:false, error, stage}>}
    */
-  async function publishPost({ token, userId, text, imageUrl = null, topicTag = null }) {
+  async function publishPost({ token, userId, text, imageUrl = null, topicTag = null, replyToId = null }) {
     let containerId;
     try {
       const params = { media_type: imageUrl ? 'IMAGE' : 'TEXT', text, access_token: token };
       if (imageUrl) params.image_url = imageUrl;
       if (topicTag) params.topic_tag = String(topicTag).replace(/[#＃.&]/g, '').slice(0, 50); // Threads のトピックタグ（1 つ。. と & は不可）
+      if (replyToId) params.reply_to_id = String(replyToId); // 返信（コメントへの返事）
       containerId = (await post(`/${userId}/threads`, params)).id;
       if (!containerId) return { ok: false, stage: 'container', error: 'コンテナ ID が返らなかった' };
     } catch (e) {
@@ -100,6 +103,31 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
     return (r.data || []).map((x) => ({ id: x.id, text: x.text, username: x.username, timestamp: x.timestamp, permalink: x.permalink, is_reply_owned_by_me: Boolean(x.is_reply_owned_by_me) }));
   }
 
+  /** コメントへの返事（reply_to_id 付きの投稿） */
+  function publishReply({ token, userId, text, replyToId }) {
+    return publishPost({ token, userId, text, replyToId });
+  }
+
+  /** フォロワー数（threads_manage_insights） */
+  async function userInsights({ token }) {
+    const r = await get('/me/threads_insights', { metric: 'followers_count', access_token: token });
+    const row = ((r.data || []).find((d) => d.name === 'followers_count')) || {};
+    const v = row.total_value ? row.total_value.value : (row.values && row.values[0] ? row.values[0].value : null);
+    return { followers: Number(v) || 0 };
+  }
+
+  /** 投稿ごとの数字（無い指標は 0） */
+  async function postInsights({ token, mediaId }) {
+    const r = await get(`/${mediaId}/insights`, { metric: POST_METRICS.join(','), access_token: token });
+    const out = {};
+    for (const m of POST_METRICS) out[m] = 0;
+    for (const d of r.data || []) {
+      const v = d.total_value ? d.total_value.value : (d.values && d.values[0] ? d.values[0].value : 0);
+      if (POST_METRICS.includes(d.name)) out[d.name] = Number(v) || 0;
+    }
+    return out;
+  }
+
   /** 鍵の持ち主と権限（診断用。鍵そのものは返さない） */
   async function whoAmI(token) {
     const me = await get('/me', { fields: 'id,username', access_token: token });
@@ -123,7 +151,7 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
     return u.toString();
   }
 
-  return { publishPost, exchangeCode, refreshToken, listMyPosts, listReplies, authorizeUrl, whoAmI };
+  return { publishPost, publishReply, userInsights, postInsights, exchangeCode, refreshToken, listMyPosts, listReplies, authorizeUrl, whoAmI };
 }
 
 module.exports = { createThreads, BASE, SCOPES, metaError };

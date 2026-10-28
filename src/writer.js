@@ -29,13 +29,27 @@ function jstWeekday(dateKeyOrDate) {
 }
 
 /** 直近 2 本の型を避けて 1 つ選ぶ。金土日は invite の重みを 2 倍 */
-function pickType(recentTypes = [], date = new Date(), rng = Math.random) {
+/**
+ * 直近 2 本の型を避けて 1 つ選ぶ。weights（型→重み。週次の分析で更新）があればそれで、無ければ既定（金土日は誘い型 3 倍、ゴルフ以外 2 倍）
+ */
+function pickType(recentTypes = [], date = new Date(), rng = Math.random, weights = null) {
   const avoid = new Set((recentTypes || []).slice(0, 2));
-  let pool = TYPES.filter((t) => !avoid.has(t));
-  if (!pool.length) pool = TYPES.slice();
-  const wd = jstWeekday(date);
-  if ([5, 6, 0].includes(wd) && pool.includes('invite')) pool = [...pool, 'invite', 'invite']; // 金土日は誘い型を 3 倍に
-  for (const t of NON_GOLF) if (pool.includes(t)) pool = [...pool, t];
+  let pool = [];
+  if (weights && typeof weights === 'object') {
+    for (const t of TYPES) {
+      const w = Math.max(0, Math.round(Number(weights[t]) || 0));
+      if (avoid.has(t)) continue;
+      for (let i = 0; i < w; i++) pool.push(t);
+    }
+    if (!pool.length) for (const t of TYPES) { const w = Math.max(0, Math.round(Number(weights[t]) || 0)); for (let i = 0; i < w; i++) pool.push(t); }
+  }
+  if (!pool.length) {
+    pool = TYPES.filter((t) => !avoid.has(t));
+    if (!pool.length) pool = TYPES.slice();
+    const wd = jstWeekday(date);
+    if ([5, 6, 0].includes(wd) && pool.includes('invite')) pool = [...pool, 'invite', 'invite']; // 金土日は誘い型を 3 倍に
+    for (const t of NON_GOLF) if (pool.includes(t)) pool = [...pool, t];
+  }
   return pool[Math.floor(rng() * pool.length)];
 }
 
