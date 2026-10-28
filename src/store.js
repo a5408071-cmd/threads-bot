@@ -18,8 +18,9 @@ const C = {
   metrics: 'threads_metrics',
 };
 
-function createStore(db, { now = () => new Date() } = {}) {
-  const col = (name) => db.collection(name);
+function createStore(db, { now = () => new Date(), prefix = 'threads_' } = {}) {
+  // prefix でアカウントを分ける（趣味用 threads_、セルフカフェ公式 threads_cafe_。2026-10-28）
+  const col = (name) => db.collection(prefix === 'threads_' ? name : name.replace(/^threads_/, prefix));
   const data = (snap) => (snap && snap.exists ? snap.data() : null);
 
   async function getDay(dateKey) {

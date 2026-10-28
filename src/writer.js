@@ -54,7 +54,7 @@ function pickType(recentTypes = [], date = new Date(), rng = Math.random, weight
 }
 
 /** 本文の最後の「タグ: 〇〇」を切り出す。# . & は落とす。無ければ型の既定 */
-function splitTag(text, type) {
+function splitTag(text, type, P = persona) {
   const lines = String(text || '').split('\n');
   let tag = null; let photoQuery = null;
   // 末尾 4 行のうち「タグ: 〇〇」「写真: <検索語>」を取り出す（どちらも 1 行ずつ）
@@ -66,7 +66,7 @@ function splitTag(text, type) {
   }
   const body = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   const clean = tag ? tag.replace(/[#＃.&\s]/g, '').slice(0, TAG_MAX) : '';
-  return { body, tag: clean || persona.DEFAULT_TAG[type] || 'ゴルフ', photoQuery };
+  return { body, tag: clean || (P.DEFAULT_TAG || {})[type] || (P.FALLBACK_TAG || 'ゴルフ'), photoQuery };
 }
 
 function norm(s) { return String(s || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ''); } // 全角・半角の違い（ＷＤＰ・ｾﾙﾌ）も当てる
@@ -122,10 +122,10 @@ function cleanOutput(raw) {
   return t;
 }
 
-function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto = false }) {
+function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto = false, P = persona, facts = null }) {
   const lines = [
     `今日: ${dateKey}（${WEEKDAYS[jstWeekday(dateKey)]}曜日）`,
-    `型: ${type} … ${persona.TYPE_GUIDE[type] || ''}`,
+    `型: ${type} … ${P.TYPE_GUIDE[type] || ''}`,
   ];
   if (type === 'news') lines.push('まずウェブ検索で今日・今週の明るい話題（スポーツ・季節の行事・グルメ・流行）を確かめてから書く。政治・事件・事故・災害・訃報・不祥事は選ばない。');
   if (recent && recent.length) {
@@ -146,8 +146,11 @@ function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto =
  * @returns {Promise<{ok:true,text,type,attempts}|{ok:false,reason,type}>}
  */
 /** 写真を添えるときの user content（画像ブロック＋指示） */
-function userContent({ type, recent, dateKey, reasons, photo, stockPhoto }) {
-  const text = userPrompt({ type, recent, dateKey, reasons, photo, stockPhoto });
+function userContent({ type, recent, dateKey, reasons, photo, stockPhoto, P = persona, facts = null }) {
+  let text = userPrompt({ type, recent, dateKey, reasons, photo, stockPhoto, P });
+  if (facts) text = `${facts}
+
+${text}`;
   if (!photo || !photo.bytes) return text;
   return [
     { type: 'image', source: { type: 'base64', media_type: photo.mediaType || 'image/jpeg', data: Buffer.from(photo.bytes).toString('base64') } },
@@ -155,15 +158,15 @@ function userContent({ type, recent, dateKey, reasons, photo, stockPhoto }) {
   ];
 }
 
-async function writePost({ type, recent = [], dateKey, env = {}, anthropic, photo = null, stockPhoto = false }) {
-  const banned = parseBanned(env);
+async function writePost({ type, recent = [], dateKey, env = {}, anthropic, photo = null, stockPhoto = false, persona: P = persona, facts = null, banned: bannedOverride = null }) {
+  const banned = bannedOverride || parseBanned(env);
   const model = env.THREADS_MODEL || DEFAULT_MODEL;
   const reasons = [];
   let lastReason = '';
   const isNews = type === 'news';
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const messages = [{ role: 'user', content: userContent({ type, recent, dateKey, reasons, photo, stockPhoto }) }];
-    const req = { model, max_tokens: MAX_TOKENS, output_config: { effort: 'medium' }, system: persona.SYSTEM, messages };
+    const messages = [{ role: 'user', content: userContent({ type, recent, dateKey, reasons, photo, stockPhoto, P, facts }) }];
+    const req = { model, max_tokens: MAX_TOKENS, output_config: { effort: 'medium' }, system: P.SYSTEM, messages };
     if (isNews) req.tools = [WEB_SEARCH_TOOL]; // 時事は検索で確かめる（作り話を防ぐ）
     let res = await anthropic.messages.create(req);
     // 検索の途中で止まった（pause_turn）ら、返ってきた content を assistant として足して続きを頼む
@@ -172,7 +175,7 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic, phot
       res = await anthropic.messages.create({ ...req, messages });
     }
     const raw = (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-    const { body, tag, photoQuery } = splitTag(cleanOutput(raw), type);
+    const { body, tag, photoQuery } = splitTag(cleanOutput(raw), type, P);
     const text = body;
     // 途中で切れた案（stop_reason=max_tokens）は空でなくても使わない
     const c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : checkText(text, { banned, recent, minChars: photo ? MIN_CHARS : MIN_CHARS_TEXT_ONLY });

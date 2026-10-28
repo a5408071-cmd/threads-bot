@@ -1,0 +1,138 @@
+/**
+ * セルフカフェ公式アカウントの見回り（/cron/tick の中で趣味用のあとに走る。2026-10-28 社長「セルフカフェのいいところを毎日ポスト 画像はHPの画像」）。
+ *   1 日 2 本（昼 11:00〜13:30・夕 17:00〜20:00）。毎回 selfcafe.jp から店を 1 つ選び（最近紹介した店は避ける）、
+ *   店舗ページの事実と写真（HP のギャラリー）で本文を書いて投稿する。写真は selfcafe.jp の URL をそのまま Meta に渡す。
+ *   鍵がまだ無い（公式アカウントを接続していない）ときは黙って何もしない（趣味用の見回りを赤くしない）。
+ *   社長 DM への写し・知らせは先頭に【公式】を付ける。
+ */
+const slots = require('./slots');
+const personaCafe = require('./personaCafe');
+const { factsText } = require('./cafeSite');
+const { daysLeft, REFRESH_BEFORE_DAYS } = require('./tick');
+
+const CAFE_WINDOWS = [
+  { from: 11 * 60, to: 13 * 60 + 30 },
+  { from: 17 * 60, to: 20 * 60 },
+];
+const RECENT_POSTS = 14;
+const LABEL = '【公式】';
+const CAFE_BANNED = ['鈴木大基', 'ウッドデザインパーク', 'wooddesignpark', 'wood-designpark'];
+const TOKEN_ALERT_HOURS = 12;
+
+function pickCafeType(recentTypes, rng = Math.random) {
+  const avoid = new Set((recentTypes || []).slice(0, 2));
+  let pool = personaCafe.TYPES.filter((t) => !avoid.has(t));
+  if (!pool.length) pool = personaCafe.TYPES.slice();
+  pool = [...pool, ...pool.filter((t) => t === 'store' || t === 'work')]; // 店舗紹介と仕事での使い方を 2 倍
+  return pool[Math.floor(rng() * pool.length)];
+}
+
+async function runCafeTick({ env = process.env, store, threads, writer, notify, anthropic, site, now = () => new Date(), mode = 'live', replies = null, forcePost = false, forceType = null, draw = null }) {
+  const t = now();
+  const dateKey = slots.jstDateKey(t);
+  const out = { ok: true, account: 'cafe', mode, dateKey, slots: null, due: null, posted: [], skipped: [], preview: null, token: null, replies: null, errors: [] };
+  if (env.CAFE_ENABLED === 'false') return { ...out, disabled: true };
+  const fail = (msg) => { out.errors.push(`${LABEL}${msg}`); out.ok = false; };
+  const tell = async (text) => { try { await notify.owner(`${LABEL}${text}`); } catch (e) { console.error('[threads] CAFE_NOTIFY_THROW', e.message); } };
+
+  let token = await store.getToken();
+  const noToken = !token || !token.token;
+  if (noToken && mode === 'live') return { ...out, noToken: true }; // まだ接続していない
+  const left = noToken ? null : daysLeft(token.expiresAt, t);
+  if (!noToken && !(left >= 0)) {
+    fail('Threads の鍵が切れています');
+    if (await store.alertDue('token-missing', TOKEN_ALERT_HOURS)) await tell('⚠ Threads の鍵が切れています。公式アカウントでログインしたブラウザで /oauth/start?account=cafe を開いて接続し直してください');
+    return out;
+  }
+  if (!noToken) out.token = { daysLeft: left, refreshed: false, expiresAt: token.expiresAt };
+  if (!noToken && left < REFRESH_BEFORE_DAYS) {
+    try {
+      const r = await threads.refreshToken(token.token);
+      token = { ...token, token: r.token, expiresAt: r.expiresAt };
+      await store.setToken(token);
+      out.token = { daysLeft: daysLeft(r.expiresAt, t), refreshed: true, expiresAt: r.expiresAt };
+    } catch (e) {
+      fail(`鍵の更新に失敗: ${e.message}`);
+      if (await store.alertDue('token-refresh', TOKEN_ALERT_HOURS)) await tell(`⚠ 鍵の更新に失敗しました（${e.message}）。残り ${left} 日`);
+    }
+  }
+
+  const day = await store.ensureDay(dateKey, draw || (() => slots.drawSlots(dateKey, Math.random, { windows: CAFE_WINDOWS, oneLess: false })));
+  out.slots = day.slots;
+  const grace = Number(env.THREADS_SLOT_GRACE_MIN) || slots.DEFAULT_GRACE_MIN;
+  const due = slots.dueSlot(day, t, { graceMin: grace });
+  out.due = due;
+
+  const compose = async () => {
+    const recent = await store.recentPosts(RECENT_POSTS);
+    const type = forceType || pickCafeType(recent.map((p) => p.type));
+    const picked = await site.pickStore({ recentUrls: recent.map((p) => p.storeUrl).filter(Boolean) });
+    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts: factsText(picked.facts), banned: CAFE_BANNED });
+    return { ...w, photo: picked.photo, storeUrl: picked.url, storeName: picked.facts.name };
+  };
+
+  const publish = async (w) => threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}) });
+  const record = async (w, r, extra = {}) => {
+    await store.savePost({ mediaId: r.mediaId, text: w.text, type: w.type, source: 'auto', permalink: r.permalink, postedAt: t.toISOString(), storeUrl: w.storeUrl, storeName: w.storeName, ...(w.tag ? { tag: w.tag } : {}), ...(w.photo ? { photoId: w.photo.id, photoName: w.photo.name } : {}), ...extra });
+    out.posted.push({ mediaId: r.mediaId, permalink: r.permalink, type: w.type, store: w.storeName, ...(w.tag ? { tag: w.tag } : {}), ...extra });
+    if (env.THREADS_COPY_TO_OWNER === 'true' || extra.manual) {
+      await tell(`📝 投稿しました（${w.storeName || '?'}・${w.type}${w.photo ? '・📷 HP' : ''}${w.tag ? `・#${w.tag}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
+    }
+  };
+
+  if (mode === 'dry' || mode === 'test') {
+    const w = await compose();
+    if (!w.ok) { fail(`本文を作れなかった: ${w.reason}`); return out; }
+    out.preview = { text: w.text, type: w.type, tag: w.tag || null, store: w.storeName, storeUrl: w.storeUrl, photoUrl: w.photo ? w.photo.url : null };
+    if (mode === 'test') await tell(`（テスト。投稿はしていません）\n${w.storeName}・型: ${w.type}\n\n${w.text}`);
+    return out;
+  }
+
+  if (due && env.CAFE_AUTO_POST !== 'false') {
+    const idx = due.index;
+    const hm = day.slots[idx];
+    if (due.status === 'late') {
+      await store.markSkipped(dateKey, idx, `猶予超え（${hm}）`);
+      out.skipped.push({ index: idx, reason: `猶予超え（${hm}）` });
+    } else if (await store.claimSlot(dateKey, idx)) {
+      let w = null;
+      try { w = await compose(); } catch (e) { fail(`本文の生成でエラー: ${e.message}`); }
+      if (!w || !w.ok) {
+        const reason = w ? w.reason : '生成エラー';
+        await store.markSkipped(dateKey, idx, reason);
+        out.skipped.push({ index: idx, reason });
+        await tell(`⚠ ${idx + 1} 本目（${hm}）は出せませんでした（${reason}）`);
+      } else {
+        const r = await publish(w);
+        if (!r.ok) {
+          await store.markSkipped(dateKey, idx, `投稿失敗: ${r.error}`);
+          out.skipped.push({ index: idx, reason: `投稿失敗: ${r.error}` });
+          fail(`投稿失敗（${r.stage}）: ${r.error}`);
+          await tell(`⚠ ${idx + 1} 本目（${hm}）の投稿に失敗しました（${r.stage}: ${r.error}）`);
+        } else {
+          await store.markPosted(dateKey, idx, { mediaId: r.mediaId });
+          await record(w, r, { index: idx });
+          console.log(`[threads] CAFE_POSTED slot=${idx} type=${w.type} store=${w.storeName}`);
+        }
+      }
+    }
+  }
+
+  if (forcePost && mode === 'live') {
+    let w = null;
+    try { w = await compose(); } catch (e) { fail(`本文の生成でエラー: ${e.message}`); }
+    if (w && !w.ok) fail(`本文を作れなかった: ${w.reason}`);
+    if (w && w.ok) {
+      const r = await publish(w);
+      if (!r.ok) fail(`投稿失敗（${r.stage}）: ${r.error}`);
+      else await record(w, r, { manual: true });
+    }
+  }
+
+  if (replies && !noToken && slots.jstHm(t).slice(3) < '10') {
+    try { out.replies = await replies.poll({ token: token.token, userId: token.userId }); } catch (e) { fail(`返信の取得でエラー: ${e.message}`); }
+  }
+  return out;
+}
+
+module.exports = { runCafeTick, pickCafeType, CAFE_WINDOWS, LABEL, CAFE_BANNED };

@@ -12,7 +12,7 @@ const TEXT_MAX = 100;
 const REPLY_MAX = 200;
 const REPLY_MODEL = 'claude-opus-5-5';
 
-function createReplies({ threads, store, notify, now = () => new Date(), anthropic = null, env = process.env }) {
+function createReplies({ threads, store, notify, now = () => new Date(), anthropic = null, env = process.env, persona: P = persona, label = '' }) {
   const cut = (s, n = TEXT_MAX) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n)}…` : t; };
   const autoReply = () => env.THREADS_AUTO_REPLY === 'true' && Boolean(anthropic);
 
@@ -22,7 +22,7 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
       model: env.THREADS_MODEL || REPLY_MODEL,
       max_tokens: 4000,
       output_config: { effort: 'low' },
-      system: persona.SYSTEM,
+      system: P.SYSTEM,
       messages: [{ role: 'user', content: [
         '自分の投稿に次のコメントが付きました。本人として、短い返事（1〜2 文、80 字以内。絵文字は 0〜1 個）を書いてください。',
         '相手の名前は書かない。感謝・共感・軽い問い返し・誘いへの前向きな返事。自分の投稿の繰り返しや宣伝はしない。',
@@ -88,7 +88,7 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
       }
     }
 
-    const lines = [`💬 Threads にコメント ${fresh.length} 件${autoReply() ? `（返事 ${out.replied} 件）` : ''}`];
+    const lines = [`${label}💬 Threads にコメント ${fresh.length} 件${autoReply() ? `（返事 ${out.replied} 件）` : ''}`];
     for (const r of fresh) {
       lines.push(`・@${r.username || '?'}「${cut(r.text)}」`);
       if (autoReply()) {

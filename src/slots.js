@@ -39,11 +39,11 @@ function pickInWindow(win, rng) {
 }
 
 /** @returns {{slots: string[]}} 'HH:MM' の昇順 */
-function drawSlots(dateKey, rng = Math.random) {
-  let windows = WINDOWS;
-  if (rng() < ONE_LESS_PROB) {
-    const drop = Math.floor(rng() * WINDOWS.length);
-    windows = WINDOWS.filter((_, i) => i !== drop);
+function drawSlots(dateKey, rng = Math.random, { windows: base = WINDOWS, oneLess = true } = {}) {
+  let windows = base;
+  if (oneLess && base.length > 1 && rng() < ONE_LESS_PROB) {
+    const drop = Math.floor(rng() * base.length);
+    windows = base.filter((_, i) => i !== drop);
   }
   const out = [];
   for (const win of windows) {

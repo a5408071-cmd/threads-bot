@@ -58,6 +58,28 @@ function createApp(deps = {}) {
     }
     return replies;
   };
+  // セルフカフェ公式アカウント（2026-10-28）。記録は threads_cafe_ 接頭辞で趣味用と分ける
+  // テストで store だけ差し替えたとき、公式の store も本物の Firestore につながないようにメモリ版にする
+  let cafeStore = deps.cafeStore || (deps.store ? require('./store').memoryStore({ prefix: 'threads_cafe_' }) : null);
+  const getCafeStore = () => {
+    if (!cafeStore) {
+      const { Firestore } = require('@google-cloud/firestore');
+      cafeStore = require('./store').createStore(new Firestore(), { prefix: 'threads_cafe_' });
+    }
+    return cafeStore;
+  };
+  const cafeNotify = { owner: (text) => getNotify().owner(text) };
+  let cafeSite = deps.cafeSite || null;
+  const getCafeSite = () => { if (!cafeSite) cafeSite = require('./cafeSite').createCafeSite({}); return cafeSite; };
+  let cafeReplies = deps.cafeReplies === undefined ? null : deps.cafeReplies;
+  const getCafeReplies = () => {
+    if (cafeReplies === null && deps.cafeReplies === undefined) {
+      try { cafeReplies = require('./replies').createReplies({ threads: getThreads(), store: getCafeStore(), notify: cafeNotify, now, anthropic: getAnthropic(), env, persona: require('./personaCafe'), label: '【公式】' }); } catch (e) { cafeReplies = null; }
+    }
+    return cafeReplies;
+  };
+  const runCafe = (mode, extra = {}) => (deps.cafeTick || require('./cafeTick')).runCafeTick({ env, store: getCafeStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: cafeNotify, anthropic: getAnthropic(), site: getCafeSite(), now, mode, replies: getCafeReplies(), ...extra });
+  const storeFor = (account) => (account === 'cafe' ? getCafeStore() : getStore());
   const redirectUri = () => `${String(env.PUBLIC_BASE_URL || '').replace(/\/+$/, '')}/oauth/callback`;
   const app = express();
   app.disable('x-powered-by');
@@ -77,8 +99,19 @@ function createApp(deps = {}) {
     const mode = req.query.dry === '1' ? 'dry' : req.query.test === '1' ? 'test' : 'live';
     if (env.THREADS_ENABLED === 'false') return res.json({ ok: true, disabled: true, mode }); // 緊急停止。Firestore にもつながない
     try {
+      if (req.query.account === 'cafe') {
+        const rc = await runCafe(mode, { forcePost: mode === 'live' && req.query.post === '1', forceType: mode !== 'live' && req.query.type ? String(req.query.type) : null });
+        const ec = (rc && rc.errors) || [];
+        if (ec.length) console.error(`[threads] CAFE_TICK_ERRORS ${ec.join(' | ')}`);
+        return res.status(ec.length ? 500 : 200).json(rc);
+      }
       const tick = deps.tick || require('./tick');
       const r = await tick.runTick({ env, store: getStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: getNotify(), anthropic: getAnthropic(), now, mode, replies: getReplies(), photos: getPhotos(), stock: getStock(), growth: getGrowth(), forcePhoto: req.query.photo === '1', forcePost: mode === 'live' && req.query.post === '1', forceType: mode !== 'live' && req.query.type ? String(req.query.type) : null });
+      // 趣味用のあとに公式も回す（公式が落ちても趣味用の結果は返す）
+      if (mode === 'live' && !(req.query.post === '1')) {
+        try { r.cafe = await runCafe('live'); } catch (e) { r.cafe = { ok: false, errors: [`【公式】${e.message}`] }; }
+        if (r.cafe && r.cafe.errors && r.cafe.errors.length) r.errors = [...(r.errors || []), ...r.cafe.errors];
+      }
       const errs = (r && r.errors) || [];
       if (errs.length) console.error(`[threads] TICK_ERRORS ${errs.join(' | ')}`);
       res.status(errs.length ? 500 : 200).json(r);
@@ -240,7 +273,7 @@ function createApp(deps = {}) {
   app.get('/admin/status', async (req, res) => {
     if (!gate(req, res)) return;
     try {
-      const store = getStore();
+      const store = storeFor(req.query.account === 'cafe' ? 'cafe' : 'hobby');
       const { jstDateKey } = require('./slots');
       const { daysLeft } = require('./tick');
       const t = now();
@@ -263,7 +296,8 @@ function createApp(deps = {}) {
     if (!gate(req, res)) return;
     if (!env.PUBLIC_BASE_URL) return res.status(503).type('text/plain').send('PUBLIC_BASE_URL 未設定');
     try {
-      const state = crypto.randomBytes(24).toString('base64url');
+      const account = req.query.account === 'cafe' ? 'cafe' : 'hobby';
+      const state = `${account}.${crypto.randomBytes(24).toString('base64url')}`;
       await getStore().setOauthState(state);
       res.redirect(302, getThreads().authorizeUrl({ redirectUri: redirectUri(), state }));
     } catch (e) {
@@ -283,10 +317,17 @@ function createApp(deps = {}) {
         console.warn('[threads] OAUTH_STATE_MISMATCH');
         return res.status(403).type('text/plain').send('state が合いません（古いか 2 回目）。/oauth/start からやり直してください');
       }
+      const account = String(q.state || '').startsWith('cafe.') ? 'cafe' : 'hobby';
       const t = await getThreads().exchangeCode({ code: String(q.code), redirectUri: redirectUri() });
-      await getStore().setToken(t);
-      console.log(`[threads] OAUTH_OK user=${t.userId} expires=${t.expiresAt}`);
-      res.type('text/plain').send(`Threads と接続しました（user ${t.userId}、期限 ${t.expiresAt}）。このタブは閉じてOKです。`);
+      // 違うアカウントでログインしたまま接続するのを防ぐ（趣味用と公式が同じ利用者なら止める）
+      const other = await storeFor(account === 'cafe' ? 'hobby' : 'cafe').getToken();
+      if (other && other.userId && String(other.userId) === String(t.userId)) {
+        console.warn(`[threads] OAUTH_SAME_USER account=${account} user=${t.userId}`);
+        return res.status(409).type('text/plain').send(`このブラウザでログインしているのは${account === 'cafe' ? '趣味用' : '公式'}のアカウントです。${account === 'cafe' ? 'セルフカフェ公式' : '趣味用'}の Threads でログインし直してから、もう一度開いてください（何も保存していません）`);
+      }
+      await storeFor(account).setToken(t);
+      console.log(`[threads] OAUTH_OK account=${account} user=${t.userId} expires=${t.expiresAt}`);
+      res.type('text/plain').send(`Threads と接続しました（${account === 'cafe' ? 'セルフカフェ公式' : '趣味用'}、user ${t.userId}、期限 ${t.expiresAt}）。このタブは閉じてOKです。`);
     } catch (e) {
       console.error('[threads] OAUTH_CALLBACK_ERROR:', e);
       res.status(500).type('text/plain').send(`接続に失敗しました: ${e.message}`);

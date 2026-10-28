@@ -31,7 +31,7 @@ describe('OAuth（社長のブラウザで Threads と接続）', () => {
     expect(loc.hostname).toBe('threads.net');
     expect(loc.searchParams.get('r')).toBe('https://tb.example/oauth/callback');
     const state = loc.searchParams.get('state');
-    expect(state).toMatch(/^[A-Za-z0-9_-]{32,}$/);
+    expect(state).toMatch(/^hobby.[A-Za-z0-9_-]{32,}$/);
   });
 
   test('callback は state 違いで 403、合えば exchangeCode → setToken → 200', async () => {
@@ -175,5 +175,44 @@ describe('審査の画面録画用のデモ画面 /demo（鍵付き）', () => {
     const p = await request(app).post('/demo/reply?key=k').send({ replyToId: 'k1', text: 'いいですね！' }).expect(200);
     expect(p.body).toMatchObject({ ok: true, permalink: 'pr1' });
     expect(threads.publishReply).toHaveBeenCalledWith({ token: 'tk', userId: 'u1', text: 'いいですね！', replyToId: 'k1' });
+  });
+});
+
+describe('セルフカフェ公式アカウント（account=cafe）', () => {
+  const { memoryStore } = require('../src/store');
+  const env = { CRON_KEY: 'k', THREADS_APP_ID: 'app', THREADS_APP_SECRET: 'sec', PUBLIC_BASE_URL: 'https://tb.example' };
+  test('/oauth/start?account=cafe → callback で公式の store に鍵が入る。趣味用と同じ利用者なら 409', async () => {
+    const store = memoryStore(); const cafeStore = memoryStore({ prefix: 'threads_cafe_' });
+    await store.setToken({ token: 'h', userId: 'hobby1', expiresAt: '2026-12-20T00:00:00.000Z' });
+    let next = { token: 'c', userId: 'cafe1', expiresAt: '2026-12-26T00:00:00.000Z' };
+    const threads = { authorizeUrl: ({ state }) => `https://threads.net/oauth/authorize?state=${state}`, exchangeCode: jest.fn(async () => next) };
+    const app = createApp({ env, store, cafeStore, threads });
+    const s1 = new URL((await request(app).get('/oauth/start?key=k&account=cafe')).headers.location).searchParams.get('state');
+    expect(s1.startsWith('cafe.')).toBe(true);
+    const r = await request(app).get(`/oauth/callback?code=x&state=${s1}`).expect(200);
+    expect(r.text).toMatch(/公式/);
+    expect((await cafeStore.getToken()).userId).toBe('cafe1');
+    expect((await store.getToken()).userId).toBe('hobby1');
+    next = { token: 'h2', userId: 'hobby1', expiresAt: '2026-12-26T00:00:00.000Z' };
+    const s2 = new URL((await request(app).get('/oauth/start?key=k&account=cafe')).headers.location).searchParams.get('state');
+    await request(app).get(`/oauth/callback?code=x&state=${s2}`).expect(409);
+    expect((await cafeStore.getToken()).userId).toBe('cafe1');
+  });
+  test('/cron/tick は趣味用のあとに公式も回す。?account=cafe&dry=1 は公式だけ', async () => {
+    const tick = { runTick: jest.fn(async ({ mode }) => ({ ok: true, errors: [], mode })) };
+    const cafeTick = { runCafeTick: jest.fn(async ({ mode }) => ({ ok: true, errors: [], mode, account: 'cafe' })) };
+    const app = createApp({ env: { CRON_KEY: 'k' }, store: memoryStore(), cafeStore: memoryStore({ prefix: 'threads_cafe_' }), tick, cafeTick, threads: {}, writer: {}, notify: { owner: jest.fn() }, anthropic: {}, photos: null, stock: null, growth: null, replies: null, cafeReplies: null, cafeSite: {} });
+    const r = await request(app).get('/cron/tick?key=k').expect(200);
+    expect(r.body.cafe).toMatchObject({ account: 'cafe' });
+    expect(tick.runTick).toHaveBeenCalledTimes(1);
+    const r2 = await request(app).get('/cron/tick?key=k&account=cafe&dry=1').expect(200);
+    expect(r2.body).toMatchObject({ account: 'cafe', mode: 'dry' });
+    expect(tick.runTick).toHaveBeenCalledTimes(1);
+  });
+  test('公式の errors があれば 500', async () => {
+    const tick = { runTick: jest.fn(async () => ({ ok: true, errors: [] })) };
+    const cafeTick = { runCafeTick: jest.fn(async () => ({ ok: false, errors: ['【公式】x'] })) };
+    const app = createApp({ env: { CRON_KEY: 'k' }, store: memoryStore(), cafeStore: memoryStore({ prefix: 'threads_cafe_' }), tick, cafeTick, threads: {}, writer: {}, notify: { owner: jest.fn() }, anthropic: {}, photos: null, stock: null, growth: null, replies: null, cafeReplies: null, cafeSite: {} });
+    await request(app).get('/cron/tick?key=k').expect(500);
   });
 });
