@@ -237,7 +237,7 @@ test('photoFits: 「はい」「合う」「yes.」も yes 扱い。「いいえ
   expect(await photoFits(args)).toBe(true);
   expect(await photoFits(args)).toBe(false);
   expect(await photoFits(args)).toBe(false);
-  expect(JSON.stringify(a.messages.create.mock.calls[0][0].messages)).toMatch(/雰囲気/);
+  expect(JSON.stringify(a.messages.create.mock.calls[0][0].messages)).toMatch(/明るく/);
 });
 
 test('photoFits: 考える工程の分も出力枠に入るので max_tokens は 1000 以上、effort は low', async () => {

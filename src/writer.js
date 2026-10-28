@@ -123,7 +123,7 @@ function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto =
   }
   lines.push(`長さ: ${photo ? LENGTH_WITH_PHOTO : LENGTH_TEXT_ONLY}`);
   lines.push('直近の投稿と同じ締め方（誘い・募集・一杯）や同じ自己紹介を繰り返さない。');
-  if (stockPhoto) lines.push('この投稿には、あとから写真サイト（Pixabay）で探した本物の写真を 1 枚付けます。本文の内容に合う写真を探す英語の検索語（2〜4 語。例: roasted sweet potato autumn / autumn golf course morning / highball glass bar）を、タグの行の前に「写真: <具体的な検索語> | <広めの検索語>」の 1 行で書いてください（2 つを | で区切る。1 つ目で見つからなければ 2 つ目で探す。例: yakiimo roasted sweet potato | autumn street food japan）。写真サイトは海外のものが中心なので、2 つ目は雰囲気寄り（例: morning run city sunrise / rooftop bar night / modern office desk coffee）にする。キラキラして前向きな雰囲気の写真になる語を選ぶ（生活感のある料理・台所は避ける）。本文は写真の説明にはしない。');
+  if (stockPhoto) lines.push('この投稿には、あとから写真サイト（Pixabay）で探した本物の写真を 1 枚付けます。本文の内容に合う写真を探す英語の検索語（2〜4 語。例: roasted sweet potato autumn / autumn golf course morning / highball glass bar）を、タグの行の前に「写真: <文の主役を表す検索語> | <同じ主役の別の言い方>」の 1 行で書いてください（2 つを | で区切る。1 つ目で見つからなければ 2 つ目。どちらも文の**主役**を表す語にする。例: hawaii beach sunrise | waikiki ocean palm trees ／ morning run city sunrise | runner sunrise road）。写真サイトは海外のものが中心なので、2 つ目は雰囲気寄り（例: morning run city sunrise / rooftop bar night / modern office desk coffee）にする。キラキラして前向きな雰囲気の写真になる語を選ぶ（生活感のある料理・台所は避ける）。本文は写真の説明にはしない。');
   lines.push('本文だけを返してください。');
   return lines.join('\n');
 }
@@ -181,7 +181,7 @@ async function photoFits({ text, bytes, mediaType = 'image/jpeg', env = {}, anth
       output_config: { effort: 'low' },
       messages: [{ role: 'user', content: [
         { type: 'image', source: { type: 'base64', media_type: mediaType, data: Buffer.from(bytes).toString('base64') } },
-        { type: 'text', text: `次の投稿文に添える写真として、この写真を使ってよいですか？ 完全に一致している必要はなく、話題や季節の雰囲気が合っていて読む人が違和感を持たなければ yes。文に出てくる物と写真の中身が明らかに別物（焼き芋の話にじゃがいも炒め、など）、季節が真逆、人の顔が大きく写っている、文字や広告が入っている、なら no。\n\n投稿文:\n${text}\n\n答えは yes か no の 1 語だけ（日本語なら はい／いいえ）。` },
+        { type: 'text', text: `次の投稿文に添える写真として、この写真を使ってよいですか？ 投稿は「前向きでキラキラした30代経営者」のアカウントです。条件は 2 つ: (1) 文の主役（ハワイの話なら海や街、ランの話なら走る風景、仕事の話ならオフィスや街の朝）と写真の中身が合っている（脇役の一語だけに合わせた写真は no）。(2) 明るく、前向きで、見ていて気持ちいい写真である（暗い・地味・接写すぎて何か分からない・生活感のある台所や料理のアップ・人の顔が大きい・文字や広告入り は no）。両方満たせば yes、どちらか欠ければ no。\n\n投稿文:\n${text}\n\n答えは yes か no の 1 語だけ（日本語なら はい／いいえ）。` },
       ] }],
     });
     const out = (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join(' ').trim().toLowerCase();
