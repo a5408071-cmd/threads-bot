@@ -177,7 +177,8 @@ async function photoFits({ text, bytes, mediaType = 'image/jpeg', env = {}, anth
   try {
     const res = await anthropic.messages.create({
       model: env.THREADS_FIT_MODEL || FIT_MODEL,
-      max_tokens: 50,
+      max_tokens: 1500, // Haiku 5.5 も考える工程が出力枠に入る（50 だと答えが空になった＝2026-10-28 実測）
+      output_config: { effort: 'low' },
       messages: [{ role: 'user', content: [
         { type: 'image', source: { type: 'base64', media_type: mediaType, data: Buffer.from(bytes).toString('base64') } },
         { type: 'text', text: `次の投稿文に添える写真として、この写真を使ってよいですか？ 完全に一致している必要はなく、話題や季節の雰囲気が合っていて読む人が違和感を持たなければ yes。文に出てくる物と写真の中身が明らかに別物（焼き芋の話にじゃがいも炒め、など）、季節が真逆、人の顔が大きく写っている、文字や広告が入っている、なら no。\n\n投稿文:\n${text}\n\n答えは yes か no の 1 語だけ（日本語なら はい／いいえ）。` },

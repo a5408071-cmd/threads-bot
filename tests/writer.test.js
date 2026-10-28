@@ -239,3 +239,12 @@ test('photoFits: 「はい」「合う」「yes.」も yes 扱い。「いいえ
   expect(await photoFits(args)).toBe(false);
   expect(JSON.stringify(a.messages.create.mock.calls[0][0].messages)).toMatch(/雰囲気/);
 });
+
+test('photoFits: 考える工程の分も出力枠に入るので max_tokens は 1000 以上、effort は low', async () => {
+  const { photoFits } = require('../src/writer');
+  const a = fakeAnthropic(['yes']);
+  await photoFits({ text: 't', bytes: Buffer.from('x'), mediaType: 'image/jpeg', env: {}, anthropic: a });
+  const call = a.messages.create.mock.calls[0][0];
+  expect(call.max_tokens).toBeGreaterThanOrEqual(1000);
+  expect(call.output_config).toEqual({ effort: 'low' });
+});
