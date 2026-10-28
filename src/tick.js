@@ -13,12 +13,14 @@ const defaultWriter = require('./writer');
 
 const RECENT_POSTS = 14;
 const RECENT_TYPES = 2;
+const PHOTO_EVERY = 4;
+const STOCK_TYPES = ['daily', 'news', 'season']; // ゴルフ以外＝ストック写真
 const REFRESH_BEFORE_DAYS = 10;
 const TOKEN_ALERT_HOURS = 12;
 
 const daysLeft = (expiresAt, now) => Math.floor((new Date(expiresAt).getTime() - now.getTime()) / 86400000);
 
-async function runTick({ env = process.env, store, threads, writer = defaultWriter, notify, anthropic, now = () => new Date(), mode = 'live', replies = null, draw = null, photos = null, forcePhoto = false, forcePost = false, forceType = null }) {
+async function runTick({ env = process.env, store, threads, writer = defaultWriter, notify, anthropic, now = () => new Date(), mode = 'live', replies = null, draw = null, photos = null, stock = null, forcePhoto = false, forcePost = false, forceType = null }) {
   const t = now();
   const dateKey = slots.jstDateKey(t);
   const out = { ok: true, mode, dateKey, slots: null, due: null, posted: [], skipped: [], preview: null, token: null, replies: null, autoPost: env.THREADS_AUTO_POST !== 'false', errors: [] };
@@ -66,18 +68,29 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
   out.due = due;
   const canPost = Boolean(token && token.token);
 
-  // 写真（本物の写真を Drive からランダムに。取れなければ写真なしで続ける）
-  // 写真は 2 本に 1 本（直前の投稿に写真があれば今回は無し。2026-10-28 社長「2つに1回は画像なしで文字だけシンプルに」）
-  const pickPhoto = async (lastHadPhoto) => {
+  // 写真は PHOTO_EVERY（4）本に 1 本（直近 3 本に写真が無ければ付ける。2026-10-28 社長「写真そんなに在庫ないなー」→ 案1）。
+  // ゴルフの型は社長の写真（Drive）、ゴルフ以外（日常・季節・時事）はストック写真（Pexels）。社長の写真が無ければゴルフもストックで代用。どれも取れなければ文字だけ
+  const photoEvery = Number(env.THREADS_PHOTO_EVERY) || PHOTO_EVERY;
+  const pickPersonal = async () => {
     if (!photos) return null;
-    if (!forcePhoto && lastHadPhoto) return null;
     try { return await photos.pick(); } catch (e) { console.warn(`[threads] PHOTO_PICK_THROW ${e.message}`); return null; }
+  };
+  const pickStock = async (query) => {
+    if (!stock || !query) return null;
+    try { return await stock.search(query); } catch (e) { console.warn(`[threads] STOCK_THROW ${e.message}`); return null; }
   };
   const compose = async () => {
     const recent = await store.recentPosts(RECENT_POSTS);
     const type = forceType || writer.pickType(recent.slice(0, RECENT_TYPES).map((p) => p.type), t);
-    const photo = await pickPhoto(Boolean(recent[0] && recent[0].photoId));
-    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo });
+    const wantPhoto = forcePhoto || !recent.slice(0, photoEvery - 1).some((p) => p.photoId);
+    const golf = !STOCK_TYPES.includes(type);
+    let photo = wantPhoto && golf ? await pickPersonal() : null;
+    const stockPhoto = wantPhoto && !photo; // 社長の写真が無い（またはゴルフ以外）→ 文を先に書いて検索語をもらう
+    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo, stockPhoto });
+    if (w.ok && stockPhoto) {
+      const s = await pickStock(w.photoQuery);
+      if (s) photo = { id: s.id, name: s.name, url: s.url, stock: true, page: s.page };
+    }
     return { ...w, photo };
   };
 

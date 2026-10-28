@@ -196,3 +196,21 @@ describe('ゴルフ以外の型とタグ（2026-10-28 社長「ゴルフ以外�
     expect(checkText(LONG + ' #ゴルフ').ok).toBe(false);
   });
 });
+
+describe('ストック写真の検索語（2026-10-28 社長「写真そんなに在庫ないなー」→ 案1）', () => {
+  test('stockPhoto:true なら「写真: 英語の検索語」の行を求め、photoQuery に切り出す', async () => {
+    const a = fakeAnthropic([`${LONG}\n写真: roasted sweet potato autumn\nタグ: 秋`]);
+    const r = await writePost({ type: 'daily', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a, stockPhoto: true });
+    expect(r.text).toBe(LONG);
+    expect(r.tag).toBe('秋');
+    expect(r.photoQuery).toBe('roasted sweet potato autumn');
+    expect(JSON.stringify(a.messages.create.mock.calls[0][0].messages)).toMatch(/写真: /);
+  });
+  test('stockPhoto でなければ写真の行は求めず、あっても落とす', async () => {
+    const a = fakeAnthropic([`${LONG}\n写真: golf\nタグ: ゴルフ`]);
+    const r = await writePost({ type: 'question', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
+    expect(r.text).toBe(LONG);
+    expect(r.photoQuery).toBeUndefined();
+    expect(JSON.stringify(a.messages.create.mock.calls[0][0].messages)).not.toMatch(/写真: /);
+  });
+});

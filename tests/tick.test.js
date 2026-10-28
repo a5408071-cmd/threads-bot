@@ -302,3 +302,59 @@ test('forceType: dry/test で型を指定できる（?type=news の確認用）'
   expect(d.writer.pickType).not.toHaveBeenCalled();
   expect(d.writer.writePost.mock.calls[0][0].type).toBe('news');
 });
+
+describe('写真は 4 本に 1 本。ゴルフの型は社長の写真、他はストック写真（2026-10-28 案1）', () => {
+  const personal = { id: 'P1', name: 'course.jpg', url: 'u-personal', mediaType: 'image/jpeg', bytes: Buffer.from('x') };
+  const stockPhoto = { id: 'pexels:101', url: 'https://images.pexels.com/101/large2x.jpg', name: 'Pexels: Ann', page: 'https://www.pexels.com/photo/101/', photographer: 'Ann' };
+  async function seed(store, n, withPhotoAt = []) {
+    for (let i = 0; i < n; i++) await store.savePost({ mediaId: 'prev' + i, text: 'p', type: 'hook', source: 'auto', postedAt: new Date(2026, 9, 20, i).toISOString(), ...(withPhotoAt.includes(i) ? { photoId: 'X' } : {}) });
+  }
+  test('直近 3 本に写真が無ければ付ける、あれば付けない', async () => {
+    const d1 = await withToken(deps({ writer: { pickType: () => 'question', writePost: jest.fn(async () => ({ ok: true, text: 't', type: 'question', attempts: 1, tag: 'ゴルフ' })) } }));
+    await seed(d1.store, 3);
+    d1.photos = { pick: jest.fn(async () => personal) };
+    d1.stock = { search: jest.fn(async () => stockPhoto) };
+    await runTick(d1);
+    expect(d1.photos.pick).toHaveBeenCalled();
+    expect(d1.threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ imageUrl: 'u-personal' }));
+    const d2 = await withToken(deps({ writer: { pickType: () => 'question', writePost: jest.fn(async () => ({ ok: true, text: 't', type: 'question', attempts: 1, tag: 'ゴルフ' })) } }));
+    await seed(d2.store, 3, [2]);
+    d2.photos = { pick: jest.fn(async () => personal) };
+    d2.stock = { search: jest.fn(async () => stockPhoto) };
+    await runTick(d2);
+    expect(d2.photos.pick).not.toHaveBeenCalled();
+    expect(d2.stock.search).not.toHaveBeenCalled();
+    expect(d2.threads.publishPost.mock.calls[0][0].imageUrl).toBeUndefined();
+  });
+  test('ゴルフ以外の型はストック写真: 文を先に書き、写真の検索語で探して付ける', async () => {
+    const writePost = jest.fn(async () => ({ ok: true, text: '焼き芋の話', type: 'daily', attempts: 1, tag: '秋', photoQuery: 'roasted sweet potato' }));
+    const d = await withToken(deps({ writer: { pickType: () => 'daily', writePost } }));
+    await seed(d.store, 3);
+    d.photos = { pick: jest.fn(async () => personal) };
+    d.stock = { search: jest.fn(async () => stockPhoto) };
+    const r = await runTick(d);
+    expect(d.photos.pick).not.toHaveBeenCalled();
+    expect(writePost.mock.calls[0][0].stockPhoto).toBe(true);
+    expect(d.stock.search).toHaveBeenCalledWith('roasted sweet potato');
+    expect(d.threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ imageUrl: stockPhoto.url }));
+    expect((await d.store.recentPosts(1))[0]).toMatchObject({ photoId: 'pexels:101', photoName: 'Pexels: Ann' });
+    expect(await d.store.photoUsedRecently('pexels:101', 180)).toBe(true);
+    expect(r.posted[0]).toMatchObject({ photo: 'Pexels: Ann' });
+  });
+  test('ゴルフの型で社長の写真が無ければストックで代用、ストックも無ければ文字だけ', async () => {
+    const writePost = jest.fn(async () => ({ ok: true, text: 't', type: 'question', attempts: 1, tag: 'ゴルフ', photoQuery: 'golf course' }));
+    const d = await withToken(deps({ writer: { pickType: () => 'question', writePost } }));
+    await seed(d.store, 3);
+    d.photos = { pick: jest.fn(async () => null) };
+    d.stock = { search: jest.fn(async () => stockPhoto) };
+    await runTick(d);
+    expect(d.threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ imageUrl: stockPhoto.url }));
+    const d2 = await withToken(deps({ writer: { pickType: () => 'question', writePost } }));
+    await seed(d2.store, 3);
+    d2.photos = { pick: jest.fn(async () => null) };
+    d2.stock = { search: jest.fn(async () => null) };
+    const r = await runTick(d2);
+    expect(r.posted).toHaveLength(1);
+    expect(d2.threads.publishPost.mock.calls[0][0].imageUrl).toBeUndefined();
+  });
+});

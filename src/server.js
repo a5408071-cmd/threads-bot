@@ -42,6 +42,11 @@ function createApp(deps = {}) {
     if (photos === null && deps.photos === undefined) photos = require('./photos').createPhotos({ store: getStore(), env, now });
     return photos;
   };
+  let stock = deps.stock === undefined ? null : deps.stock;
+  const getStock = () => {
+    if (stock === null && deps.stock === undefined) stock = require('./stock').createStock({ store: getStore(), env, now });
+    return stock;
+  };
   const getReplies = () => {
     if (replies === null && deps.replies === undefined) {
       try { replies = require('./replies').createReplies({ threads: getThreads(), store: getStore(), notify: getNotify(), now }); } catch (e) { replies = null; }
@@ -68,7 +73,7 @@ function createApp(deps = {}) {
     if (env.THREADS_ENABLED === 'false') return res.json({ ok: true, disabled: true, mode }); // 緊急停止。Firestore にもつながない
     try {
       const tick = deps.tick || require('./tick');
-      const r = await tick.runTick({ env, store: getStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: getNotify(), anthropic: getAnthropic(), now, mode, replies: getReplies(), photos: getPhotos(), forcePhoto: req.query.photo === '1', forcePost: mode === 'live' && req.query.post === '1', forceType: mode !== 'live' && req.query.type ? String(req.query.type) : null });
+      const r = await tick.runTick({ env, store: getStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: getNotify(), anthropic: getAnthropic(), now, mode, replies: getReplies(), photos: getPhotos(), stock: getStock(), forcePhoto: req.query.photo === '1', forcePost: mode === 'live' && req.query.post === '1', forceType: mode !== 'live' && req.query.type ? String(req.query.type) : null });
       const errs = (r && r.errors) || [];
       if (errs.length) console.error(`[threads] TICK_ERRORS ${errs.join(' | ')}`);
       res.status(errs.length ? 500 : 200).json(r);

@@ -42,14 +42,17 @@ function pickType(recentTypes = [], date = new Date(), rng = Math.random) {
 /** 本文の最後の「タグ: 〇〇」を切り出す。# . & は落とす。無ければ型の既定 */
 function splitTag(text, type) {
   const lines = String(text || '').split('\n');
-  let tag = null;
-  for (let i = lines.length - 1; i >= 0 && i >= lines.length - 3; i--) {
+  let tag = null; let photoQuery = null;
+  // 末尾 4 行のうち「タグ: 〇〇」「写真: <検索語>」を取り出す（どちらも 1 行ずつ）
+  for (let i = lines.length - 1; i >= 0 && i >= lines.length - 4; i--) {
     const m = lines[i].match(/^\s*(?:タグ|tag|topic)\s*[:：]\s*(.+?)\s*$/i);
-    if (m) { tag = m[1]; lines.splice(i, 1); break; }
+    if (m && tag == null) { tag = m[1]; lines.splice(i, 1); continue; }
+    const p = lines[i].match(/^\s*(?:写真|photo|image)\s*[:：]\s*(.+?)\s*$/i);
+    if (p && photoQuery == null) { photoQuery = p[1].replace(/[#＃"「」]/g, '').trim().slice(0, 80); lines.splice(i, 1); }
   }
   const body = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   const clean = tag ? tag.replace(/[#＃.&\s]/g, '').slice(0, TAG_MAX) : '';
-  return { body, tag: clean || persona.DEFAULT_TAG[type] || 'ゴルフ' };
+  return { body, tag: clean || persona.DEFAULT_TAG[type] || 'ゴルフ', photoQuery };
 }
 
 function norm(s) { return String(s || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ''); } // 全角・半角の違い（ＷＤＰ・ｾﾙﾌ）も当てる
@@ -105,7 +108,7 @@ function cleanOutput(raw) {
   return t;
 }
 
-function userPrompt({ type, recent, dateKey, reasons, photo = null }) {
+function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto = false }) {
   const lines = [
     `今日: ${dateKey}（${WEEKDAYS[jstWeekday(dateKey)]}曜日）`,
     `型: ${type} … ${persona.TYPE_GUIDE[type] || ''}`,
@@ -120,6 +123,7 @@ function userPrompt({ type, recent, dateKey, reasons, photo = null }) {
   }
   lines.push(`長さ: ${photo ? LENGTH_WITH_PHOTO : LENGTH_TEXT_ONLY}`);
   lines.push('直近の投稿と同じ締め方（誘い・募集・一杯）や同じ自己紹介を繰り返さない。');
+  if (stockPhoto) lines.push('この投稿には、あとから写真サイト（Pexels）で探した本物の写真を 1 枚付けます。本文の内容に合う写真を探す英語の検索語（2〜4 語。例: roasted sweet potato autumn / autumn golf course morning / highball glass bar）を、タグの行の前に「写真: <検索語>」の 1 行で書いてください。本文は写真の説明にはしない。');
   lines.push('本文だけを返してください。');
   return lines.join('\n');
 }
@@ -128,8 +132,8 @@ function userPrompt({ type, recent, dateKey, reasons, photo = null }) {
  * @returns {Promise<{ok:true,text,type,attempts}|{ok:false,reason,type}>}
  */
 /** 写真を添えるときの user content（画像ブロック＋指示） */
-function userContent({ type, recent, dateKey, reasons, photo }) {
-  const text = userPrompt({ type, recent, dateKey, reasons, photo });
+function userContent({ type, recent, dateKey, reasons, photo, stockPhoto }) {
+  const text = userPrompt({ type, recent, dateKey, reasons, photo, stockPhoto });
   if (!photo || !photo.bytes) return text;
   return [
     { type: 'image', source: { type: 'base64', media_type: photo.mediaType || 'image/jpeg', data: Buffer.from(photo.bytes).toString('base64') } },
@@ -137,14 +141,14 @@ function userContent({ type, recent, dateKey, reasons, photo }) {
   ];
 }
 
-async function writePost({ type, recent = [], dateKey, env = {}, anthropic, photo = null }) {
+async function writePost({ type, recent = [], dateKey, env = {}, anthropic, photo = null, stockPhoto = false }) {
   const banned = parseBanned(env);
   const model = env.THREADS_MODEL || DEFAULT_MODEL;
   const reasons = [];
   let lastReason = '';
   const isNews = type === 'news';
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const messages = [{ role: 'user', content: userContent({ type, recent, dateKey, reasons, photo }) }];
+    const messages = [{ role: 'user', content: userContent({ type, recent, dateKey, reasons, photo, stockPhoto }) }];
     const req = { model, max_tokens: MAX_TOKENS, output_config: { effort: 'medium' }, system: persona.SYSTEM, messages };
     if (isNews) req.tools = [WEB_SEARCH_TOOL]; // 時事は検索で確かめる（作り話を防ぐ）
     let res = await anthropic.messages.create(req);
@@ -154,11 +158,11 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic, phot
       res = await anthropic.messages.create({ ...req, messages });
     }
     const raw = (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-    const { body, tag } = splitTag(cleanOutput(raw), type);
+    const { body, tag, photoQuery } = splitTag(cleanOutput(raw), type);
     const text = body;
     // 途中で切れた案（stop_reason=max_tokens）は空でなくても使わない
     const c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : checkText(text, { banned, recent, minChars: photo ? MIN_CHARS : MIN_CHARS_TEXT_ONLY });
-    if (c.ok) return { ok: true, text, type, attempts: attempt, tag };
+    if (c.ok) return { ok: true, text, type, attempts: attempt, tag, ...(stockPhoto && photoQuery ? { photoQuery } : {}) };
     lastReason = c.reason;
     reasons.push(c.reason);
     console.warn(`[threads] WRITE_REJECTED attempt=${attempt} reason=${c.reason}`);
