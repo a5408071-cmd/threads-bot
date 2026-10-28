@@ -129,6 +129,10 @@ function createStore(db, { now = () => new Date() } = {}) {
     if (!snap || !snap.exists || !snap.data().lastUsedAt) return false;
     return now().getTime() - new Date(snap.data().lastUsedAt).getTime() < days * 86400000;
   }
+  async function photoLastUsed(fileId) {
+    const snap = await col(C.photos).doc(String(fileId)).get();
+    return snap && snap.exists && snap.data().lastUsedAt ? snap.data().lastUsedAt : null;
+  }
   async function markPhotoUsed(fileId) {
     const ref = col(C.photos).doc(String(fileId));
     const snap = await ref.get();
@@ -148,7 +152,7 @@ function createStore(db, { now = () => new Date() } = {}) {
     });
   }
 
-  return { getDay, ensureDay, claimSlot, releaseSlot, markPosted, markSkipped, savePost, recentPosts, getToken, setToken, getConfig, setConfig, seenReply, markReplySeen, alertDue, setOauthState, takeOauthState, photoUsedRecently, markPhotoUsed };
+  return { getDay, ensureDay, claimSlot, releaseSlot, markPosted, markSkipped, savePost, recentPosts, getToken, setToken, getConfig, setConfig, seenReply, markReplySeen, alertDue, setOauthState, takeOauthState, photoUsedRecently, markPhotoUsed, photoLastUsed };
 }
 
 /** Firestore の使う部分だけを Map で真似る（テスト用）。createStore に渡すので本番と同じ経路を通る */

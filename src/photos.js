@@ -107,10 +107,22 @@ function createPhotos({ drive, http, convert = defaultConvert, store, env = proc
       console.warn(`[threads] PHOTO_LIST_FAILED ${e.message}`);
       return null;
     }
+    if (!files.length) { console.log('[threads] PHOTO_NONE total=0'); return null; }
     const fresh = [];
     for (const f of files) if (!(await store.photoUsedRecently(f.id, COOLDOWN_DAYS))) fresh.push(f);
-    if (!fresh.length) { console.log(`[threads] PHOTO_NONE total=${files.length}`); return null; }
-    const f = fresh[Math.floor(rng() * fresh.length)];
+    let f;
+    if (fresh.length) {
+      f = fresh[Math.floor(rng() * fresh.length)];
+    } else {
+      // 在庫切れ: 一番前に使ったものを使い回す（1 日 4 本×2 本に 1 本で在庫が尽きやすい。2026-10-28）
+      let oldest = null;
+      for (const x of files) {
+        const at = await store.photoLastUsed(x.id);
+        if (!oldest || String(at || '') < String(oldest.at || '')) oldest = { file: x, at };
+      }
+      f = oldest.file;
+      console.log(`[threads] PHOTO_REUSE id=${f.id} total=${files.length}`);
+    }
     try {
       const bytes = await jpegOf(f.id, f.name);
       return { id: f.id, name: f.name, url: urlOf(f.id), mediaType: 'image/jpeg', bytes };

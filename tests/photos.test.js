@@ -42,12 +42,12 @@ test('serve: 同じ写真を URL で頼まれたら変換済みの JPEG を返�
   expect(drive.download).toHaveBeenCalledWith('P9');
 });
 
-test('pick: 最近使った写真は避ける。全部最近なら null', async () => {
+test('pick: 最近使った写真は避ける。全部最近なら一番前に使ったものを使い回す', async () => {
   const { photos, store } = mk({ files: [{ id: 'P1', name: 'a.jpg', mimeType: 'image/jpeg' }, { id: 'P2', name: 'b.jpg', mimeType: 'image/jpeg' }], rng: () => 0 });
   await store.markPhotoUsed('P1');
   expect((await photos.pick()).id).toBe('P2');
   await store.markPhotoUsed('P2');
-  expect(await photos.pick()).toBeNull();
+  expect((await photos.pick()).id).toBe('P1');
 });
 
 test('pick: フォルダ未設定・画像なし・一覧の失敗・変換の失敗は null（投稿は止めない）', async () => {
@@ -74,3 +74,14 @@ test('isHeic は mimeType か拡張子で判定', () => {
 });
 
 test('COOLDOWN_DAYS は 60', () => expect(COOLDOWN_DAYS).toBe(60));
+
+test('pick: 全部 60 日以内に使っていたら、一番前に使ったものを使い回す（在庫切れで写真なしにしない）', async () => {
+  let t = new Date('2026-10-28T00:00:00Z');
+  const store = memoryStore({ now: () => t });
+  const { photos } = mk({ store, files: [{ id: 'P1', name: 'a.jpg', mimeType: 'image/jpeg' }, { id: 'P2', name: 'b.jpg', mimeType: 'image/jpeg' }], rng: () => 0 });
+  await store.markPhotoUsed('P1');
+  t = new Date('2026-10-29T00:00:00Z');
+  await store.markPhotoUsed('P2');
+  t = new Date('2026-10-30T00:00:00Z');
+  expect((await photos.pick()).id).toBe('P1');
+});

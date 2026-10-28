@@ -96,3 +96,10 @@ test('photoUsedRecently / markPhotoUsed（60 日）', async () => {
   t = new Date('2026-12-28T00:00:00Z');
   expect(await s.photoUsedRecently('P1', 60)).toBe(false);
 });
+
+test('photoLastUsed は最後に使った時刻（無ければ null）', async () => {
+  const s = memoryStore({ now: () => new Date('2026-10-28T00:00:00Z') });
+  expect(await s.photoLastUsed('P1')).toBeNull();
+  await s.markPhotoUsed('P1');
+  expect(await s.photoLastUsed('P1')).toBe('2026-10-28T00:00:00.000Z');
+});
