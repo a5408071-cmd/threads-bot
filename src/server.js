@@ -181,6 +181,30 @@ function createApp(deps = {}) {
     }
   });
 
+  // Meta の審査で求められる固定ページ（誰でも開ける）
+  const pages = require('./pages');
+  app.get('/privacy', (req, res) => res.type('html').send(pages.PRIVACY));
+  app.get('/terms', (req, res) => res.type('html').send(pages.TERMS));
+  app.get('/data-deletion', (req, res) => res.type('html').send(pages.DELETION));
+  app.post('/data-deletion', (req, res) => res.json({ url: `${String(env.PUBLIC_BASE_URL || '').replace(/\/+$/, '')}/data-deletion`, confirmation_code: `del-${Date.now()}` })); // Meta の「データ削除コールバック」の形
+
+  // 成長の仕組みを今すぐ走らせる（確認用。?daily=1 / ?weekly=1）
+  app.get('/admin/growth', async (req, res) => {
+    if (!gate(req, res)) return;
+    try {
+      const tok = await getStore().getToken();
+      if (!tok || !tok.token) return res.status(503).json({ ok: false, error: '鍵なし' });
+      const g = getGrowth();
+      const out = {};
+      if (req.query.daily === '1') out.daily = await g.daily(tok);
+      if (req.query.weekly === '1') out.weekly = await g.weekly(tok);
+      if (req.query.weights === '1') out.weights = await g.weightsFor();
+      res.json(out);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   app.get('/admin/status', async (req, res) => {
     if (!gate(req, res)) return;
     try {

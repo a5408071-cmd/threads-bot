@@ -131,3 +131,27 @@ test('GET /media/stock/:id.jpg は stock.serve の JPEG を返す（署名違い
   await request(app).get('/media/stock/102.jpg?sig=bad').expect(404);
   await request(app).get('/media/stock/102.jpg').expect(403);
 });
+
+describe('/admin/growth と審査用の固定ページ', () => {
+  const { memoryStore } = require('../src/store');
+  test('/admin/growth?daily=1 は growth.daily を今すぐ走らせる（鍵が要る）。?weekly=1 は weekly', async () => {
+    const store = memoryStore();
+    await store.setToken({ token: 'tk', userId: 'u1', expiresAt: '2026-12-20T00:00:00.000Z' });
+    const growth = { daily: jest.fn(async () => ({ ok: true, followers: 7, updated: 2, errors: [] })), weekly: jest.fn(async () => ({ ok: true, weights: { question: 3 } })), weightsFor: jest.fn() };
+    const app = createApp({ env: { CRON_KEY: 'k' }, store, growth });
+    await request(app).get('/admin/growth?daily=1').expect(403);
+    const r = await request(app).get('/admin/growth?key=k&daily=1').expect(200);
+    expect(r.body).toMatchObject({ daily: { followers: 7 } });
+    expect(growth.daily).toHaveBeenCalledWith(expect.objectContaining({ token: 'tk' }));
+    const r2 = await request(app).get('/admin/growth?key=k&weekly=1').expect(200);
+    expect(r2.body).toMatchObject({ weekly: { ok: true } });
+  });
+  test('/privacy /terms /data-deletion は誰でも開ける（Meta の審査で URL が要る）', async () => {
+    const app = createApp({ env: { CRON_KEY: 'k' } });
+    for (const p of ['/privacy', '/terms', '/data-deletion']) {
+      const r = await request(app).get(p).expect(200);
+      expect(r.headers['content-type']).toMatch(/text\/html/);
+      expect(r.text).toMatch(/Threads/);
+    }
+  });
+});
