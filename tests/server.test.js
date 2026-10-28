@@ -121,3 +121,13 @@ test('/admin/whoami?fix=1 は保存した userId が /me と違えば書き直�
   expect((await store.getToken()).userId).toBe('29077612258522047');
   expect(JSON.stringify(r.body)).not.toMatch(/"tk"/);
 });
+
+test('GET /media/stock/:id.jpg は stock.serve の JPEG を返す（署名違いは 404、無しは 403）', async () => {
+  const stock = { serve: jest.fn(async (id, sig) => (id === '102' && sig === 'good' ? Buffer.from('stockjpg') : null)) };
+  const app = createApp({ env: { CRON_KEY: 'k' }, stock });
+  const r = await request(app).get('/media/stock/102.jpg?sig=good').expect(200);
+  expect(r.headers['content-type']).toMatch(/image\/jpeg/);
+  expect(r.body.toString()).toBe('stockjpg');
+  await request(app).get('/media/stock/102.jpg?sig=bad').expect(404);
+  await request(app).get('/media/stock/102.jpg').expect(403);
+});

@@ -123,7 +123,7 @@ function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto =
   }
   lines.push(`長さ: ${photo ? LENGTH_WITH_PHOTO : LENGTH_TEXT_ONLY}`);
   lines.push('直近の投稿と同じ締め方（誘い・募集・一杯）や同じ自己紹介を繰り返さない。');
-  if (stockPhoto) lines.push('この投稿には、あとから写真サイト（Pexels）で探した本物の写真を 1 枚付けます。本文の内容に合う写真を探す英語の検索語（2〜4 語。例: roasted sweet potato autumn / autumn golf course morning / highball glass bar）を、タグの行の前に「写真: <検索語>」の 1 行で書いてください。本文は写真の説明にはしない。');
+  if (stockPhoto) lines.push('この投稿には、あとから写真サイト（Pixabay）で探した本物の写真を 1 枚付けます。本文の内容に合う写真を探す英語の検索語（2〜4 語。例: roasted sweet potato autumn / autumn golf course morning / highball glass bar）を、タグの行の前に「写真: <検索語>」の 1 行で書いてください。本文は写真の説明にはしない。');
   lines.push('本文だけを返してください。');
   return lines.join('\n');
 }

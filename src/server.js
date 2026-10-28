@@ -160,6 +160,22 @@ function createApp(deps = {}) {
     }
   });
 
+  // ストック写真（Pixabay）を Meta に渡す口。Pixabay はホットリンク禁止なので自分で出す（署名付き）
+  app.get('/media/stock/:file', async (req, res) => {
+    const id = String(req.params.file || '').replace(/\.jpe?g$/i, '');
+    const sig = String(req.query.sig || '');
+    if (!/^\d{1,12}$/.test(id) || !sig) return res.sendStatus(403);
+    try {
+      const st = getStock();
+      const bytes = st && (await st.serve(id, sig));
+      if (!bytes) return res.sendStatus(404);
+      res.set('Content-Type', 'image/jpeg').set('Cache-Control', 'public, max-age=3600').send(bytes);
+    } catch (e) {
+      console.error('[threads] MEDIA_STOCK_ERROR:', e.message);
+      res.sendStatus(502);
+    }
+  });
+
   app.get('/admin/status', async (req, res) => {
     if (!gate(req, res)) return;
     try {
