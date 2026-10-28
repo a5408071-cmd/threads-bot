@@ -170,4 +170,25 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic, phot
   return { ok: false, reason: lastReason, type };
 }
 
-module.exports = { pickType, checkText, writePost, similarity, parseBanned, TYPES, MAX_CHARS, MIN_CHARS, DEFAULT_MODEL, DEFAULT_BANNED, MAX_TOKENS };
+const FIT_MODEL = 'claude-haiku-5-5'; // 写真が文に合うかの yes/no（安いモデルで十分）
+
+/** ストック写真が本文に合うか（yes/no）。曖昧・失敗は false（合わない扱い＝写真なしで出す方が安全） */
+async function photoFits({ text, bytes, mediaType = 'image/jpeg', env = {}, anthropic }) {
+  try {
+    const res = await anthropic.messages.create({
+      model: env.THREADS_FIT_MODEL || FIT_MODEL,
+      max_tokens: 50,
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: mediaType, data: Buffer.from(bytes).toString('base64') } },
+        { type: 'text', text: `次の投稿文に添える写真として、この写真は自然に合いますか？ 文に出てくる物・季節・場面と写真の中身が食い違っていれば no。\n\n投稿文:\n${text}\n\n答えは yes か no の 1 語だけ。` },
+      ] }],
+    });
+    const out = (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join(' ').trim().toLowerCase();
+    return /^yes\b/.test(out);
+  } catch (e) {
+    console.warn(`[threads] PHOTO_FIT_FAILED ${e.message}`);
+    return false;
+  }
+}
+
+module.exports = { pickType, checkText, writePost, photoFits, similarity, parseBanned, TYPES, MAX_CHARS, MIN_CHARS, DEFAULT_MODEL, DEFAULT_BANNED, MAX_TOKENS, FIT_MODEL };

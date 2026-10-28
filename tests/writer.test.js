@@ -214,3 +214,16 @@ describe('ストック写真の検索語（2026-10-28 社長「写真そんな�
     expect(JSON.stringify(a.messages.create.mock.calls[0][0].messages)).not.toMatch(/写真: /);
   });
 });
+
+test('photoFits: 写真と本文を安いモデルに見せて yes/no で判定（答えが曖昧なら false）', async () => {
+  const { photoFits } = require('../src/writer');
+  const a = fakeAnthropic(['yes', 'NO、じゃがいもの炒め物です', '']);
+  const bytes = Buffer.from('x');
+  expect(await photoFits({ text: '焼き芋の話', bytes, mediaType: 'image/jpeg', env: {}, anthropic: a })).toBe(true);
+  expect(await photoFits({ text: '焼き芋の話', bytes, mediaType: 'image/jpeg', env: {}, anthropic: a })).toBe(false);
+  expect(await photoFits({ text: '焼き芋の話', bytes, mediaType: 'image/jpeg', env: {}, anthropic: a })).toBe(false);
+  const call = a.messages.create.mock.calls[0][0];
+  expect(call.model).toBe('claude-haiku-5-5');
+  expect(call.messages[0].content.find((b) => b.type === 'image')).toBeTruthy();
+  expect(JSON.stringify(call.messages)).toMatch(/焼き芋の話/);
+});

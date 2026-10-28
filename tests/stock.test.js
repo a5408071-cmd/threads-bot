@@ -58,3 +58,15 @@ test('search: 画像を実際に取って確かめる（取れなければ null�
 });
 
 test('STOCK_COOLDOWN_DAYS は 180', () => expect(STOCK_COOLDOWN_DAYS).toBe(180));
+
+test('search: verify を渡すと候補ごとに確かめ、合わないものは飛ばして次へ（3 枚まで）。全部ダメなら null', async () => {
+  const verify = jest.fn(async ({ bytes }) => false);
+  const { stock, http } = mk({ rng: () => 0 });
+  expect(await stock.search('yakiimo', { verify })).toBeNull();
+  expect(verify).toHaveBeenCalledTimes(2); // 候補が 2 枚
+  const ok = mk({ rng: () => 0 });
+  const verify2 = jest.fn(async () => true);
+  const p = await ok.stock.search('x', { verify: verify2 });
+  expect(p.id).toBe('pixabay:101');
+  expect(verify2).toHaveBeenCalledWith(expect.objectContaining({ bytes: expect.any(Buffer), name: 'Pixabay: Ann' }));
+});

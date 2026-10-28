@@ -335,7 +335,7 @@ describe('写真は 4 本に 1 本。ゴルフの型は社長の写真、他は�
     const r = await runTick(d);
     expect(d.photos.pick).not.toHaveBeenCalled();
     expect(writePost.mock.calls[0][0].stockPhoto).toBe(true);
-    expect(d.stock.search).toHaveBeenCalledWith('roasted sweet potato');
+    expect(d.stock.search).toHaveBeenCalledWith('roasted sweet potato', expect.anything());
     expect(d.threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ imageUrl: stockPhoto.url }));
     expect((await d.store.recentPosts(1))[0]).toMatchObject({ photoId: 'pexels:101', photoName: 'Pexels: Ann' });
     expect(await d.store.photoUsedRecently('pexels:101', 180)).toBe(true);
@@ -357,4 +357,16 @@ describe('写真は 4 本に 1 本。ゴルフの型は社長の写真、他は�
     expect(r.posted).toHaveLength(1);
     expect(d2.threads.publishPost.mock.calls[0][0].imageUrl).toBeUndefined();
   });
+});
+
+test('ストック写真は writer.photoFits で確かめてから付ける（stock.search に verify を渡す）', async () => {
+  const writePost = jest.fn(async () => ({ ok: true, text: '焼き芋の話', type: 'daily', attempts: 1, tag: '秋', photoQuery: 'yakiimo' }));
+  const photoFits = jest.fn(async () => true);
+  const d = await withToken(deps({ writer: { pickType: () => 'daily', writePost, photoFits } }));
+  for (let i = 0; i < 3; i++) await d.store.savePost({ mediaId: 'prev' + i, text: 'p', type: 'hook', source: 'auto', postedAt: new Date(2026, 9, 20, i).toISOString() });
+  const search = jest.fn(async (q, { verify }) => ((await verify({ bytes: Buffer.from('img'), mediaType: 'image/jpeg', name: 'Pixabay: Ann' })) ? { id: 'pixabay:1', url: 'u', name: 'Pixabay: Ann', page: '', photographer: 'Ann' } : null));
+  d.stock = { search };
+  await runTick(d);
+  expect(photoFits).toHaveBeenCalledWith(expect.objectContaining({ text: '焼き芋の話', bytes: Buffer.from('img') }));
+  expect(d.threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ imageUrl: 'u' }));
 });

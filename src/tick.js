@@ -75,9 +75,11 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
     if (!photos) return null;
     try { return await photos.pick(); } catch (e) { console.warn(`[threads] PHOTO_PICK_THROW ${e.message}`); return null; }
   };
-  const pickStock = async (query) => {
+  const pickStock = async (query, text) => {
     if (!stock || !query) return null;
-    try { return await stock.search(query); } catch (e) { console.warn(`[threads] STOCK_THROW ${e.message}`); return null; }
+    // AI に写真を見せて文に合うか確かめてから付ける（writer.photoFits が無ければ確かめない）
+    const verify = writer.photoFits ? (p) => writer.photoFits({ text, bytes: p.bytes, mediaType: p.mediaType, env, anthropic }) : null;
+    try { return await stock.search(query, { verify }); } catch (e) { console.warn(`[threads] STOCK_THROW ${e.message}`); return null; }
   };
   const compose = async () => {
     const recent = await store.recentPosts(RECENT_POSTS);
@@ -88,7 +90,7 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
     const stockPhoto = wantPhoto && !photo; // 社長の写真が無い（またはゴルフ以外）→ 文を先に書いて検索語をもらう
     const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo, stockPhoto });
     if (w.ok && stockPhoto) {
-      const s = await pickStock(w.photoQuery);
+      const s = await pickStock(w.photoQuery, w.text);
       if (s) photo = { id: s.id, name: s.name, url: s.url, stock: true, page: s.page };
     }
     return { ...w, photo };

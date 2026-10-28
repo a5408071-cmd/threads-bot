@@ -39,7 +39,7 @@ function createStock({ http, store, env = process.env, now = () => new Date(), r
   const urlOf = (id) => `${String(env.PUBLIC_BASE_URL || '').replace(/\/+$/, '')}/media/stock/${id}.jpg?sig=${stockSig(id, env)}`;
 
   /** @returns {Promise<{id,url,name,page,photographer}|null>} */
-  async function search(query) {
+  async function search(query, { verify = null, maxTries = 3 } = {}) {
     const q = String(query || '').trim();
     if (!env.PIXABAY_API_KEY || !q || !env.PUBLIC_BASE_URL || !env.CRON_KEY) return null;
     let hits;
@@ -58,16 +58,27 @@ function createStock({ http, store, env = process.env, now = () => new Date(), r
       candidates.push({ raw: h.id, id, name: `Pixabay: ${h.user || '?'}`, page: h.pageURL || '', photographer: h.user || '', src: h.largeImageURL || h.webformatURL });
     }
     if (!candidates.length) { console.log(`[threads] STOCK_NONE q="${q}" total=${hits.length}`); return null; }
-    const pick = candidates[Math.floor(rng() * candidates.length)];
-    try {
-      const bytes = await download(pick.src);
+    // ランダムな順で最大 maxTries 枚: 取れて、verify（AI が文に合うか見る）を通ったものを使う（検索語だけだと「焼き芋」で炒めじゃがいもが来た＝2026-10-28 実測）
+    const start = Math.floor(rng() * candidates.length);
+    const order = candidates.slice(start).concat(candidates.slice(0, start)); // ランダムな位置から順に
+    for (const pick of order.slice(0, maxTries)) {
+      let bytes;
+      try {
+        bytes = await download(pick.src);
+      } catch (e) {
+        console.warn(`[threads] STOCK_FETCH_FAILED id=${pick.id} ${e.message}`);
+        continue;
+      }
+      if (verify) {
+        let fits = false;
+        try { fits = await verify({ bytes, mediaType: 'image/jpeg', name: pick.name }); } catch (e) { console.warn(`[threads] STOCK_VERIFY_THROW ${e.message}`); }
+        if (!fits) { console.log(`[threads] STOCK_REJECTED id=${pick.id} q="${q}"`); continue; }
+      }
       cache.set(String(pick.raw), { bytes, at: now().getTime() });
       if (cache.size > 20) cache.delete(cache.keys().next().value);
-    } catch (e) {
-      console.warn(`[threads] STOCK_FETCH_FAILED id=${pick.id} ${e.message}`);
-      return null;
+      return { id: pick.id, url: urlOf(pick.raw), name: pick.name, page: pick.page, photographer: pick.photographer };
     }
-    return { id: pick.id, url: urlOf(pick.raw), name: pick.name, page: pick.page, photographer: pick.photographer };
+    return null;
   }
 
   /** /media/stock/<id>.jpg の中身。署名が合わなければ null。キャッシュに無ければ id で Pixabay に聞き直して取る */
