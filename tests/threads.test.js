@@ -249,3 +249,17 @@ describe('publish の「メディアが見つかりません」（code 24 / 4279
     expect(h.calls.filter((c) => /threads_publish/.test(c.url)).length).toBe(1);
   });
 });
+
+test('publishPost: linkAttachment は文字だけの投稿に link_attachment として付ける（写真ありには付けない）', async () => {
+  const h = http([
+    { match: /\/u1\/threads$/, reply: { id: 'c1' } },
+    { match: /\/c1$/, reply: { status: 'FINISHED' } },
+    { match: /\/u1\/threads_publish$/, reply: { id: 'm1' } },
+    { match: /\/m1$/, reply: { permalink: 'p' } },
+  ]);
+  const t = createThreads({ http: h, env: {}, sleep: noSleep });
+  await t.publishPost({ token: 'tk', userId: 'u1', text: 'x', linkAttachment: 'https://toyokeizai.net/articles/-/961515' });
+  expect(h.calls[0].opts.link_attachment).toBe('https://toyokeizai.net/articles/-/961515');
+  await t.publishPost({ token: 'tk', userId: 'u1', text: 'x', imageUrl: 'https://a/b.jpg', linkAttachment: 'https://toyokeizai.net/' });
+  expect(h.calls.filter((c) => /\/u1\/threads$/.test(c.url))[1].opts.link_attachment).toBeUndefined();
+});

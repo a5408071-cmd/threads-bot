@@ -239,3 +239,22 @@ test('名言の回は「今日は名言編」で始まらなければ書き直�
   expect(quoteCheck('「小さいことを…」。イチロー選手の言葉です').ok).toBe(false);
   expect(quoteCheck('今日は名言編です。\nセルフカフェ栄店で').ok).toBe(false); // 店名の検査も続けて掛かる
 });
+
+describe('メディア掲載の紹介（2026-10-29 社長）', () => {
+  const MEDIA_ITEM = { url: 'https://selfcafe.jp/media-information/202610213449/', date: '2026-10-21', category: 'メディア掲載', title: '【メディア情報】東洋経済オンラインに掲載されました。', tags: ['オンラインメディア'] };
+  const MEDIA = { item: MEDIA_ITEM, text: '東洋経済オンラインにセルフカフェの取材記事が掲載されました。', shopUrl: null, storeName: null, photo: null, kind: 'media', linkUrl: 'https://toyokeizai.net/articles/-/961515' };
+  test('型 media で書かせ、記事のリンクを link_attachment に。紹介は 1 回だけ（翌日は出さない）', async () => {
+    const d = deps({ news: [MEDIA_ITEM] });
+    await d.store.setToken(TOKEN);
+    d.site.announcement = jest.fn(async () => MEDIA);
+    d.writer.writePost = jest.fn(async () => ({ ok: true, text: '東洋経済オンラインで取材していただきました！', type: 'media', attempts: 1, tag: 'セルフカフェ' }));
+    await runCafeTick({ ...d, forcePost: true });
+    expect(d.writer.writePost.mock.calls[0][0].type).toBe('media');
+    expect(d.writer.writePost.mock.calls[0][0].facts).toMatch(/東洋経済/);
+    expect(d.threads.publishPost.mock.calls[0][0].linkAttachment).toBe('https://toyokeizai.net/articles/-/961515');
+    const d2 = deps({ news: [MEDIA_ITEM], store: d.store, now: at('11:20', '2026-10-30') });
+    d2.site.announcement = jest.fn(async () => MEDIA);
+    await runCafeTick({ ...d2, forcePost: true });
+    expect(d2.site.announcement).not.toHaveBeenCalled();
+  });
+});

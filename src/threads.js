@@ -44,13 +44,14 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
   /**
    * @returns {Promise<{ok:true, mediaId, permalink}|{ok:false, error, stage}>}
    */
-  async function publishPost({ token, userId, text, imageUrl = null, topicTag = null, replyToId = null }) {
+  async function publishPost({ token, userId, text, imageUrl = null, topicTag = null, replyToId = null, linkAttachment = null }) {
     let containerId;
     try {
       const params = { media_type: imageUrl ? 'IMAGE' : 'TEXT', text, access_token: token };
       if (imageUrl) params.image_url = imageUrl;
       if (topicTag) params.topic_tag = String(topicTag).replace(/[#＃.&]/g, '').slice(0, 50); // Threads のトピックタグ（1 つ。. と & は不可）
       if (replyToId) params.reply_to_id = String(replyToId); // 返信（コメントへの返事）
+      if (linkAttachment && !imageUrl) params.link_attachment = String(linkAttachment); // 文字だけの投稿にリンクのカード（メディア掲載の記事など）
       containerId = (await post(`/${userId}/threads`, params)).id;
       if (!containerId) return { ok: false, stage: 'container', error: 'コンテナ ID が返らなかった' };
     } catch (e) {

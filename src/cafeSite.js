@@ -8,7 +8,11 @@
 const SHOP_LIST_URL = 'https://selfcafe.jp/shop/';
 // 新着情報（2026-10-29 社長「特定の店舗は新店舗もしくは新しい取り組みがある場合のみ」）。種類は 新店舗情報／キャンペーン／お知らせ（2026-10-29 実測）
 const NEWS_URL = 'https://selfcafe.jp/news/';
-const ANNOUNCE_CATEGORIES = { 新店舗情報: 'newstore', キャンペーン: 'campaign' }; // お知らせ（支払い方法の変更など）は告知しない
+// メディア情報（テレビ・新聞・オンラインの掲載。2026-10-29 社長「HPのメディア情報あがったときは連動して」）は別の一覧。種類は「メディア掲載」として扱う
+const MEDIA_URL = 'https://selfcafe.jp/media-information/';
+const MEDIA_CATEGORY = 'メディア掲載';
+const MEDIA_DAYS = 14; // 記事の日付からこの日数まで紹介する
+const ANNOUNCE_CATEGORIES = { 新店舗情報: 'newstore', キャンペーン: 'campaign', [MEDIA_CATEGORY]: 'media' }; // お知らせ（支払い方法の変更など）は告知しない
 const ARTICLE_MAX_AGE_DAYS = 30;
 const NEWSTORE_AFTER_OPEN_DAYS = 7;
 const CAMPAIGN_NO_DATE_DAYS = 14;
@@ -117,6 +121,28 @@ function parseNewsList(html) {
   return out;
 }
 
+/** メディア情報の一覧（新しい順）。#テレビ出演 などは tags に */
+function parseMediaList(html) {
+  const out = [];
+  for (const m of String(html || '').matchAll(/<article class="blog-listItem">([\s\S]*?)<\/article>/g)) {
+    const a = m[1];
+    const url = (a.match(/href="([^"]+)"/) || [])[1];
+    const date = (a.match(/datetime="(\d{4}-\d{2}-\d{2})"/) || [])[1];
+    const title = decode(((a.match(/blog-listItem_title[^>]*>([^<]+)</) || [])[1] || '').trim());
+    const cat = (a.match(/blog-listItem_category[^>]*>([\s\S]*?)<\/(?:p|a)>/) || [])[1] || '';
+    const tags = [...cat.matchAll(/<span>#?([^<]+)<\/span>/g)].map((x) => x[1].trim()).filter(Boolean);
+    if (url && date && title) out.push({ url, date, category: MEDIA_CATEGORY, title, tags });
+  }
+  return out;
+}
+
+/** メディア情報の記事: 本文と、掲載記事へのリンク（selfcafe.jp 以外の最初のリンク） */
+function parseMediaEntry(html) {
+  const body = (String(html || '').match(/<div class="entryBody[^"]*">([\s\S]*?)(?:<div class="entryNavi|<\/article>)/) || [])[1] || '';
+  const linkUrl = [...body.matchAll(/href="(https?:\/\/[^"]+)"/g)].map((x) => decode(x[1])).find((u) => !/^https?:\/\/([^/]+\.)?selfcafe\.jp\//.test(u)) || null;
+  return { ...parseNewsEntry(html), linkUrl };
+}
+
 /** 記事の本文（文字だけ）と、本文中の店舗ページへのリンク */
 function parseNewsEntry(html) {
   // 本文の中に入れ子の <div> があっても切れないよう、次の目印（前後の記事のナビ・</article>）まで取る
@@ -147,6 +173,7 @@ function isAnnounceable(item, today) {
   const kind = ANNOUNCE_CATEGORIES[item.category];
   if (!kind) return false;
   if (dayDiff(today, item.date) > ARTICLE_MAX_AGE_DAYS) return false;
+  if (kind === 'media') return dayDiff(today, item.date) <= MEDIA_DAYS;
   const d = announcementDate(item);
   if (kind === 'newstore') return d ? dayDiff(today, d) <= NEWSTORE_AFTER_OPEN_DAYS : dayDiff(today, item.date) <= CAMPAIGN_NO_DATE_DAYS;
   return d ? dayDiff(today, d) <= 0 : dayDiff(today, item.date) <= CAMPAIGN_NO_DATE_DAYS;
@@ -222,12 +249,18 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
 
   /** 告知してよい新着記事（OPEN 日・終わりの日が近い順） */
   async function pendingAnnouncements(today) {
-    const items = parseNewsList(await getText(NEWS_URL)).filter((i) => isAnnounceable(i, today));
+    let media = [];
+    try { media = parseMediaList(await getText(MEDIA_URL)); } catch (e) { console.warn(`[threads] CAFE_MEDIA_LIST_FAILED ${e.message}`); } // 読めなくても新着の告知は止めない
+    const items = [...parseNewsList(await getText(NEWS_URL)), ...media].filter((i) => isAnnounceable(i, today));
     return items.sort((a, b) => String(announcementDate(a) || a.date).localeCompare(String(announcementDate(b) || b.date)));
   }
 
   /** 記事の本文・店名・写真（店舗ページのギャラリー。開店前で無ければ null） */
   async function announcement(item) {
+    if (item.category === MEDIA_CATEGORY) {
+      const m = parseMediaEntry(await getText(item.url));
+      return { item, text: m.text, shopUrl: null, storeName: null, photo: null, kind: 'media', linkUrl: m.linkUrl }; // 写真は付けず、記事のリンクのカード（link_attachment）で見せる
+    }
     const entry = parseNewsEntry(await getText(item.url));
     let storeName = (item.title.match(/「([^」]+)」/) || [])[1] || null;
     let photo = null;
@@ -244,4 +277,4 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
   return { listStores, storeFacts, pickStore, pickPhoto, pendingAnnouncements, announcement };
 }
 
-module.exports = { createCafeSite, parseStoreList, parseStorePage, factsText, parseNewsList, parseNewsEntry, announcementDate, isAnnounceable, SHOP_LIST_URL, NEWS_URL, ANNOUNCE_CATEGORIES };
+module.exports = { createCafeSite, parseStoreList, parseStorePage, factsText, parseNewsList, parseNewsEntry, parseMediaList, parseMediaEntry, MEDIA_URL, announcementDate, isAnnounceable, SHOP_LIST_URL, NEWS_URL, ANNOUNCE_CATEGORIES };

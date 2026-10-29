@@ -1,4 +1,7 @@
-const { pickType, checkText, writePost, TYPES, parseBanned, DEFAULT_BANNED } = require('../src/writer');
+const W = require('../src/writer');
+const { pickType, checkText, TYPES, parseBanned, DEFAULT_BANNED } = W;
+// 長さのくじは真ん中（ふつうの回）に固定。ばらつきは下の「長さのくじ」で見る
+const writePost = (o) => W.writePost({ rand: () => 0.5, ...o });
 
 // 120 字以上の「通る」見本（自動投稿は短すぎる案を書き直させる＝2026-10-27 社長「文章短すぎ！」）
 const LONG = '名古屋で平日ゴルフ行ける人、いませんか！？三重・岐阜は平日ガラガラで安くて最高なのに、周りが土日派ばっかりで寂しいです笑。30代、スコア90〜100で楽しむ派。20代・30代大歓迎、40代ももちろんOKです！気軽にコメントくださいね🙌 平日の午後からでも大丈夫です！';
@@ -77,7 +80,7 @@ test('writePost の system に人物像と禁止事項、user に日付・型・
   const call = a.messages.create.mock.calls[0][0];
   const sys = String(call.system);
   expect(sys).toMatch(/名古屋/); expect(sys).toMatch(/90/); expect(sys).toMatch(/ゴルフ場の名前/); expect(sys).toMatch(/作り話/);
-  expect(sys).toMatch(/150〜300字/);
+  expect(sys).toMatch(/長さは毎回の指示に従う/);
   expect(call.model).toBe('claude-opus-5-5');
   expect(call.max_tokens).toBeGreaterThanOrEqual(8000);
   const user = JSON.stringify(call.messages);
@@ -119,11 +122,11 @@ test('writePost: 写真を渡すと user に画像ブロックと「写ってい
   expect(txt).toMatch(/写真/); expect(txt).toMatch(/いつ|どこ/);
 });
 
-test('写真なしの回は短めの指示（100〜180字）、写真ありは 150〜300字。どちらも「募集・一杯で締めない」の指示が入る', async () => {
+test('写真なしのふつうの回は短めの指示（90〜160字）、写真ありは 150〜300字。どちらも「募集・一杯で締めない」の指示が入る', async () => {
   const a = fakeAnthropic([LONG, LONG]);
   await writePost({ type: 'aruaru', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a });
   const u1 = JSON.stringify(a.messages.create.mock.calls[0][0].messages);
-  expect(u1).toMatch(/100〜180字/);
+  expect(u1).toMatch(/90〜160字/);
   await writePost({ type: 'aruaru', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a, photo: { id: 'P', name: 'a.jpg', mediaType: 'image/jpeg', bytes: Buffer.from('x') } });
   const u2 = JSON.stringify(a.messages.create.mock.calls[1][0].messages);
   expect(u2).toMatch(/150〜300字/);
@@ -345,4 +348,36 @@ test('writePost の check（呼ぶ側の追加検査）に落ちたら理由を�
   const r = await writePost({ type: 'work', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a, check, banned: [] });
   expect(r).toMatchObject({ ok: true, attempts: 2, text: LONG });
   expect(JSON.stringify(a.messages.create.mock.calls[1][0].messages)).toMatch(/店名が入っている/);
+});
+
+describe('長さのくじ（2026-10-29 社長「文字数がいつも同じぐらいだからばらつかせて」）', () => {
+  const userOf = (a, i = 0) => JSON.stringify(a.messages.create.mock.calls[i][0].messages);
+  test('写真なし: くじが小さいと「ひと言」の短い回、大きいと「少し語る回」', async () => {
+    const a = fakeAnthropic([LONG, LONG]);
+    await W.writePost({ type: 'aruaru', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a, rand: () => 0.1 });
+    expect(userOf(a, 0)).toMatch(/25〜60字/);
+    await W.writePost({ type: 'aruaru', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a, rand: () => 0.9 });
+    expect(userOf(a, 1)).toMatch(/200〜320字/);
+  });
+  test('写真あり: 短い回は 60〜110字、長い回は 280〜420字', async () => {
+    const photo = { id: 'P', name: 'a.jpg', mediaType: 'image/jpeg', bytes: Buffer.from('x') };
+    const a = fakeAnthropic([LONG, LONG]);
+    await W.writePost({ type: 'season', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a, photo, rand: () => 0.1 });
+    expect(userOf(a, 0)).toMatch(/60〜110字/);
+    await W.writePost({ type: 'season', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a, photo, rand: () => 0.9 });
+    expect(userOf(a, 1)).toMatch(/280〜420字/);
+  });
+  test('短い回は短い案を通す（最低字数もその回に合わせる）', async () => {
+    const tiny = '朝の一杯目のコーヒー、今日もうまい☕'; // 約 18 字
+    const ok = '朝イチのコーヒーがうまい季節になりました。今日もがんばろう☕'; // 約 30 字
+    const a = fakeAnthropic([tiny, ok]);
+    const r = await W.writePost({ type: 'aruaru', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a, rand: () => 0.1 });
+    expect(r).toMatchObject({ ok: true, attempts: 2, text: ok });
+  });
+  test('名言・告知は「ひと言」の回にしない（くじが小さくてもふつうの回）', async () => {
+    const a = fakeAnthropic([LONG]);
+    await W.writePost({ type: 'quote', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a, rand: () => 0.1 });
+    expect(userOf(a)).not.toMatch(/25〜60字/);
+    expect(userOf(a)).toMatch(/90〜160字/);
+  });
 });

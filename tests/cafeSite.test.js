@@ -99,3 +99,43 @@ test('parseNewsEntry（レビュー指摘）: 本文に入れ子の div があ�
   expect(e.shopUrl).toBe('https://selfcafe.jp/shop/gifu/aeontown-ogaki/');
   expect(e.text).toMatch(/本文です/);
 });
+
+describe('メディア情報（2026-10-29 社長「東洋経済新聞にインタビューされたことを紹介 HPのメディア情報あがったときは連動して」）', () => {
+  const { parseMediaList, parseMediaEntry, MEDIA_URL } = require('../src/cafeSite');
+  const LIST = `<!--repeat-->
+			<article class="blog-listItem">
+				<a href="https://selfcafe.jp/media-information/202610213449/">
+					<div class="blog-listItem_img"><span><img src="https://selfcafe.jp/x.png" /></span></div>
+					<p class="blog-listItem_date"><time datetime="2026-10-21">2026.10.21</time></p>
+					<h3 class="blog-listItem_title">【メディア情報】東洋経済オンラインに掲載されました。</h3>
+					<p class="blog-listItem_category"><span>#オンラインメディア</span>				</a>
+			</article>
+			<article class="blog-listItem">
+				<a href="https://selfcafe.jp/media-information/202610073358/">
+					<p class="blog-listItem_date"><time datetime="2026-10-07">2026.10.07</time></p>
+					<h3 class="blog-listItem_title">フジテレビ めざましどようびで紹介されました。</h3>
+					<p class="blog-listItem_category"><span>#テレビ出演</span><span>#オンラインメディア</span>				</a>
+			</article>`;
+  const ENTRY = `<div class="entryBody txtbox sectionbox"><p>東洋経済オンラインにセルフカフェの取材記事が掲載されました。</p>
+<p>【東洋経済オンライン】<br><a href="https://toyokeizai.net/articles/-/961515">https://toyokeizai.net/articles/-/961515</a><br>【Yahoo!ニュース】<br><a href="https://news.yahoo.co.jp/articles/e4ea">https://news.yahoo.co.jp/articles/e4ea</a></p>
+<p>▶FC制度のご案内 <a href="https://selfcafe.jp/franchise/">https://selfcafe.jp/franchise/</a></p></div><div class="entryNaviWrap">`;
+  test('一覧: URL・日付・見出し、種類は「メディア掲載」（媒体の種類は tags）', () => {
+    expect(MEDIA_URL).toBe('https://selfcafe.jp/media-information/');
+    const l = parseMediaList(LIST);
+    expect(l).toEqual([
+      { url: 'https://selfcafe.jp/media-information/202610213449/', date: '2026-10-21', category: 'メディア掲載', title: '【メディア情報】東洋経済オンラインに掲載されました。', tags: ['オンラインメディア'] },
+      { url: 'https://selfcafe.jp/media-information/202610073358/', date: '2026-10-07', category: 'メディア掲載', title: 'フジテレビ めざましどようびで紹介されました。', tags: ['テレビ出演', 'オンラインメディア'] },
+    ]);
+  });
+  test('本文と、記事へのリンク（selfcafe.jp 以外の最初のリンク）', () => {
+    const e = parseMediaEntry(ENTRY);
+    expect(e.linkUrl).toBe('https://toyokeizai.net/articles/-/961515');
+    expect(e.text).toMatch(/取材記事が掲載/);
+  });
+  test('isAnnounceable: メディア掲載は記事の日付から 14 日まで', () => {
+    const [toyo] = parseMediaList(LIST);
+    expect(isAnnounceable(toyo, '2026-10-29')).toBe(true);
+    expect(isAnnounceable(toyo, '2026-11-04')).toBe(true);
+    expect(isAnnounceable(toyo, '2026-11-05')).toBe(false);
+  });
+});

@@ -14,10 +14,28 @@ const MAX_CONTINUES = 3; // pause_turn（検索の続き）の上限
 const TAG_MAX = 50;
 const MAX_ATTEMPTS = 3;
 const MAX_CHARS = 500;
-const MIN_CHARS = 120; // 写真ありの最低字数（2026-10-27 社長「文章短すぎ！」）
-const MIN_CHARS_TEXT_ONLY = 80; // 写真なしは短めでシンプルに（2026-10-28 社長「2つに1回は画像なしで文字だけシンプルに」）
-const LENGTH_WITH_PHOTO = '150〜300字・3〜6文';
-const LENGTH_TEXT_ONLY = '100〜180字・2〜4文。写真が無い回なのでシンプルに、言いたいことを1つに絞る';
+const MIN_CHARS = 120; // 写真ありのふつうの回の最低字数（2026-10-27 社長「文章短すぎ！」）
+// 長さは投稿ごとにくじで決める（2026-10-29 社長「文字数がいつも同じぐらいだからばらつかせて」）。
+// 短い回・ふつうの回・少し長い回。min はその回の最低字数（書き直しの判定）。ふつうの回は以前の固定値と同じ
+const LENGTH_BANDS = {
+  photo: [
+    { text: '60〜110字・1〜2文。写真にひと言添えるくらい、さらっと', min: 45 },
+    { text: '150〜300字・3〜6文', min: MIN_CHARS },
+    { text: '280〜420字・5〜8文。今回は少し語る回（中身を1つ深める。話題を増やさない）', min: 230 },
+  ],
+  text: [
+    { text: '25〜60字・1〜2文。ひと言だけのつぶやき', min: 20 },
+    { text: '90〜160字・2〜4文。写真が無い回なのでシンプルに、言いたいことを1つに絞る', min: 70 },
+    { text: '200〜320字・4〜6文。今回は少し語る回（中身を1つ深める。話題を増やさない）', min: 160 },
+  ],
+};
+const NO_TINY_TYPES = ['quote', 'newstore', 'campaign', 'media', 'countdown']; // 中身が要る型は「ひと言」の回にしない
+
+function pickLength({ photo, type, rand = Math.random }) {
+  const bands = LENGTH_BANDS[photo ? 'photo' : 'text'];
+  const i = Math.min(bands.length - 1, Math.floor(rand() * bands.length));
+  return (i === 0 && NO_TINY_TYPES.includes(type)) ? bands[1] : bands[i];
+}
 const SIMILARITY_LIMIT = 0.6;
 const DEFAULT_MODEL = 'claude-opus-5-5';
 const MAX_TOKENS = 8000; // thinking の分も数えられるので小さいと本文が途中で切れる（iso-bot の中部経済新聞で 3000〜8000 で切れた実績）
@@ -125,7 +143,7 @@ function checkText(text, { banned = [], recent = [], minChars = 0 } = {}) {
   const t = String(text || '').trim();
   if (!t) return { ok: false, reason: '本文が空' };
   if (t.length > MAX_CHARS) return { ok: false, reason: `${MAX_CHARS}字超（${t.length}字）` };
-  if (minChars && t.length < minChars) return { ok: false, reason: `短すぎる（${t.length}字。${minChars}字以上・3〜6文で）` }; // 自動投稿だけ（社長の一言＝/api/post には掛けない）
+  if (minChars && t.length < minChars) return { ok: false, reason: `短すぎる（${t.length}字。${minChars}字以上で）` }; // 自動投稿だけ（社長の一言＝/api/post には掛けない）
   if (URL_RE.test(t)) return { ok: false, reason: 'URLが入っている' };
   if (/(^|\s)[#＃]\S/.test(t)) return { ok: false, reason: '本文に #ハッシュタグ が入っている（タグは「タグ: 〇〇」の行で 1 つだけ）' };
   const n = norm(t);
@@ -150,7 +168,7 @@ function cleanOutput(raw) {
   return t;
 }
 
-function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto = false, P = persona, facts = null }) {
+function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto = false, P = persona, facts = null, length = null }) {
   const lines = [
     `今日: ${dateKey}（${WEEKDAYS[jstWeekday(dateKey)]}曜日）`,
     `型: ${type} … ${P.TYPE_GUIDE[type] || ''}`,
@@ -167,7 +185,7 @@ function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto =
   if (reasons && reasons.length) {
     lines.push(`前の案は次の理由で使えませんでした。直して書き直してください: ${reasons.join(' / ')}`);
   }
-  lines.push(`長さ: ${photo ? LENGTH_WITH_PHOTO : LENGTH_TEXT_ONLY}`);
+  lines.push(`長さ: ${(length || pickLength({ photo, type, rand: () => 0.5 })).text}`);
   lines.push('直近の投稿と同じ締め方（誘い・募集・一杯）や同じ自己紹介を繰り返さない。');
   if (stockPhoto) lines.push('この投稿には、あとから写真サイト（Pixabay）で探した本物の写真を 1 枚付けます。本文の内容に合う写真を探す英語の検索語（2〜4 語。例: roasted sweet potato autumn / autumn golf course morning / highball glass bar）を、タグの行の前に「写真: <文の主役を表す検索語> | <同じ主役の別の言い方>」の 1 行で書いてください（2 つを | で区切る。1 つ目で見つからなければ 2 つ目。どちらも文の**主役**を表す語にする。例: hawaii beach sunrise | waikiki ocean palm trees ／ morning run city sunrise | runner sunrise road）。写真サイトは海外のものが中心なので、2 つ目は雰囲気寄り（例: morning run city sunrise / rooftop bar night / modern office desk coffee）にする。キラキラして前向きな雰囲気の写真になる語を選ぶ（生活感のある料理・台所は避ける）。本文は写真の説明にはしない。');
   lines.push('本文だけを返してください。');
@@ -178,8 +196,8 @@ function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto =
  * @returns {Promise<{ok:true,text,type,attempts}|{ok:false,reason,type}>}
  */
 /** 写真を添えるときの user content（画像ブロック＋指示） */
-function userContent({ type, recent, dateKey, reasons, photo, stockPhoto, P = persona, facts = null }) {
-  let text = userPrompt({ type, recent, dateKey, reasons, photo, stockPhoto, P });
+function userContent({ type, recent, dateKey, reasons, photo, stockPhoto, P = persona, facts = null, length = null }) {
+  let text = userPrompt({ type, recent, dateKey, reasons, photo, stockPhoto, P, length });
   if (facts) text = `${facts}
 
 ${text}`;
@@ -190,14 +208,15 @@ ${text}`;
   ];
 }
 
-async function writePost({ type, recent = [], dateKey, env = {}, anthropic, photo = null, stockPhoto = false, persona: P = persona, facts = null, banned: bannedOverride = null, check: extraCheck = null }) {
+async function writePost({ type, recent = [], dateKey, env = {}, anthropic, photo = null, stockPhoto = false, persona: P = persona, facts = null, banned: bannedOverride = null, check: extraCheck = null, rand = Math.random }) {
+  const length = pickLength({ photo, type, rand }); // 書き直しの間も同じ長さ
   const banned = bannedOverride || parseBanned(env);
   const model = env.THREADS_MODEL || DEFAULT_MODEL;
   const reasons = [];
   let lastReason = '';
   const useSearch = SEARCH_TYPES.includes(type);
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const messages = [{ role: 'user', content: userContent({ type, recent, dateKey, reasons, photo, stockPhoto, P, facts }) }];
+    const messages = [{ role: 'user', content: userContent({ type, recent, dateKey, reasons, photo, stockPhoto, P, facts, length }) }];
     const req = { model, max_tokens: MAX_TOKENS, output_config: { effort: 'medium' }, system: P.SYSTEM, messages };
     if (useSearch) req.tools = [WEB_SEARCH_TOOL]; // 時事・試験日・暦・研究の話は検索で確かめる（作り話を防ぐ）
     let res = await anthropic.messages.create(req);
@@ -211,7 +230,7 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic, phot
     const cd = fillCountdown(body, targetDate, dateKey, type);
     const text = cd.ok ? cd.text : body;
     // 途中で切れた案（stop_reason=max_tokens）は空でなくても使わない
-    let c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : (!cd.ok ? cd : checkText(text, { banned, recent, minChars: photo ? MIN_CHARS : MIN_CHARS_TEXT_ONLY }));
+    let c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : (!cd.ok ? cd : checkText(text, { banned, recent, minChars: length.min }));
     if (c.ok && extraCheck) c = extraCheck(text) || { ok: true }; // 呼ぶ側の追加の検査（公式のふだんの回で店名・駅名を出さない など）
     if (c.ok) return { ok: true, text, type, attempts: attempt, tag, ...(stockPhoto && photoQuery ? { photoQuery } : {}) };
     lastReason = c.reason;
@@ -245,4 +264,4 @@ async function photoFits({ text, bytes, mediaType = 'image/jpeg', env = {}, anth
   }
 }
 
-module.exports = { pickType, checkText, writePost, photoFits, similarity, parseBanned, fillCountdown, TYPES, SEARCH_TYPES, MAX_CHARS, MIN_CHARS, DEFAULT_MODEL, DEFAULT_BANNED, MAX_TOKENS, FIT_MODEL };
+module.exports = { pickType, checkText, writePost, photoFits, similarity, parseBanned, fillCountdown, TYPES, SEARCH_TYPES, MAX_CHARS, MIN_CHARS, LENGTH_BANDS, pickLength, DEFAULT_MODEL, DEFAULT_BANNED, MAX_TOKENS, FIT_MODEL };

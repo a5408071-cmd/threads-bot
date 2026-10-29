@@ -102,8 +102,9 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     const today = Object.values(done).filter((v) => v.days.includes(dateKey)).length;
     if (!force && today >= perDay) return null;
     const rec = (u) => done[u] || { days: [], texts: [] };
+    const daysFor = (i) => (i.category === 'メディア掲載' ? 1 : announceDays); // メディア掲載の紹介は 1 回だけ
     const items = (await site.pendingAnnouncements(dateKey))
-      .filter((i) => rec(i.url).days.length < announceDays && (force || !rec(i.url).days.includes(dateKey)))
+      .filter((i) => rec(i.url).days.length < daysFor(i) && (force || !rec(i.url).days.includes(dateKey)))
       .map((i, k) => ({ i, k, started: rec(i.url).days.length > 0 }))
       .sort((x, y) => (Number(y.started) - Number(x.started)) || (x.k - y.k)) // 続き（2〜3 日目）を先に
       .map((x) => x.i);
@@ -125,19 +126,20 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     if (wantAnnounce) {
       try { a = await pickAnnouncement({ force: Boolean(forceType) }); } catch (e) { console.warn(`[threads] CAFE_ANNOUNCE_FAILED ${e.message}`); }
     }
-    if (forceType && personaCafe.ANNOUNCE_TYPES.includes(forceType) && !a) return { ok: false, reason: '告知できる新店舗・キャンペーンの記事が無い', type: forceType };
+    if (forceType && personaCafe.ANNOUNCE_TYPES.includes(forceType) && !a) return { ok: false, reason: '告知できる新店舗・キャンペーン・メディア掲載の記事が無い', type: forceType };
     if (a) {
       const type = a.kind || (a.item.category === 'キャンペーン' ? 'campaign' : 'newstore');
+      const total = type === 'media' ? 1 : announceDays;
       const facts = [
         `今回は公式サイト（selfcafe.jp）の「${a.item.category}」の記事を告知する回です。ここにある事実だけを使う（無い設備・数字・料金・条件は書かない）。`,
         `- 見出し: ${a.item.title}`,
         `- 記事の日付: ${a.item.date}`,
         `- 本文:\n${a.text}`,
-        `この記事の告知は ${a.round || 1} 回目（全 ${announceDays} 回）。${(a.round || 1) > 1 ? ((a.previous || []).length ? '前回までの告知文と、書き出し・切り口・取り上げる事実の順番・使い方の例・締めを変える（同じ文・同じ言い回しは使わない）:' : '前回の告知とは書き出し・切り口・使い方の例を変える（前回の文は残っていない）。') : '1 回目なので、何がいつどこで始まるかを分かりやすく。'}`,
+        `この記事の告知は ${a.round || 1} 回目（全 ${total} 回）。${(a.round || 1) > 1 ? ((a.previous || []).length ? '前回までの告知文と、書き出し・切り口・取り上げる事実の順番・使い方の例・締めを変える（同じ文・同じ言い回しは使わない）:' : '前回の告知とは書き出し・切り口・使い方の例を変える（前回の文は残っていない）。') : '1 回目なので、何がいつどこで始まるかを分かりやすく。'}`,
         ...(a.previous || []).map((p, k) => `  前回${k + 1}: ${String(p).replace(/\n/g, ' ')}`),
       ].join('\n');
       const w = await writer.writePost({ type, recent: [...(a.previous || []), ...recent.map((p) => p.text)], dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts, banned: CAFE_BANNED });
-      return { ...w, photo: a.photo, storeUrl: a.shopUrl, storeName: a.storeName, announceUrl: a.item.url };
+      return { ...w, photo: a.photo, storeUrl: a.shopUrl, storeName: a.storeName, announceUrl: a.item.url, ...(a.linkUrl ? { linkUrl: a.linkUrl } : {}) };
     }
     const type = forceType || pickCafeType(recent.map((p) => p.type));
     const picked = await site.pickPhoto({ recentUrls: recent.map((p) => p.storeUrl).filter(Boolean) });
@@ -151,7 +153,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     return { ...w, photo: picked.photo, storeUrl: picked.url, storeName: null };
   };
 
-  const publish = async (w) => threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}) });
+  const publish = async (w) => threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}), ...(w.linkUrl ? { linkAttachment: w.linkUrl } : {}) });
   const record = async (w, r, extra = {}) => {
     // 公開できたら先に告知済みにする（後の保存で落ちても同じ記事を二度出さない）
     if (w.announceUrl) { try { await markAnnounced(w.announceUrl, w.text); } catch (e) { fail(`告知済みの記録に失敗: ${e.message}`); } }
