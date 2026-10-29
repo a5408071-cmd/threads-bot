@@ -139,3 +139,14 @@ describe('メディア情報（2026-10-29 社長「東洋経済新聞にイン�
     expect(isAnnounceable(toyo, '2026-11-05')).toBe(false);
   });
 });
+
+test('pendingAnnouncements: include に入れた記事は期間外でも告知の対象（2026-10-29 社長「高畑と安城と本陣もそれぞれ載せておいて」）', async () => {
+  const http = { get: jest.fn(async (url) => {
+    if (url === 'https://selfcafe.jp/news/') return { data: NEWS };
+    throw new Error('unexpected ' + url);
+  }) };
+  const site = createCafeSite({ http, rng: () => 0 });
+  expect(await site.pendingAnnouncements('2026-12-31')).toEqual([]);
+  const r = await site.pendingAnnouncements('2026-12-31', { include: ['https://selfcafe.jp/newstore/202610133411/'] });
+  expect(r.map((i) => i.url)).toEqual(['https://selfcafe.jp/newstore/202610133411/']);
+});

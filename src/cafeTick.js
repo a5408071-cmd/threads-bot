@@ -7,6 +7,7 @@
  */
 const slots = require('./slots');
 const personaCafe = require('./personaCafe');
+const { announcementDate } = require('./cafeSite');
 const { daysLeft, REFRESH_BEFORE_DAYS } = require('./tick');
 
 // 1 日 5 本（2026-10-29 社長「毎日5投稿いける」）。窓どうしを 90 分あけて、間隔の下限（slots の MIN_GAP_MIN）を必ず守れるようにしてある
@@ -104,7 +105,8 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     if (!force && today >= perDay) return null;
     const rec = (u) => done[u] || { days: [], texts: [] };
     const daysFor = (i) => (i.category === 'メディア掲載' ? 1 : announceDays); // メディア掲載の紹介は 1 回だけ
-    const items = (await site.pendingAnnouncements(dateKey))
+    const include = String(env.CAFE_ANNOUNCE_EXTRA_URLS || '').split(/[;,]/).map((u) => u.trim()).filter(Boolean); // 期間外でも告知する記事
+    const items = (await site.pendingAnnouncements(dateKey, { include }))
       .filter((i) => !kind || kindOf(i) === kind) // 型を指定したら（type=media など）その種類の記事だけ
       .filter((i) => rec(i.url).days.length < daysFor(i) && (force || !rec(i.url).days.includes(dateKey)))
       .map((i, k) => ({ i, k, started: rec(i.url).days.length > 0 }))
@@ -136,6 +138,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
         `今回は公式サイト（selfcafe.jp）の「${a.item.category}」の記事を告知する回です。ここにある事実だけを使う（無い設備・数字・料金・条件は書かない）。`,
         `- 見出し: ${a.item.title}`,
         `- 記事の日付: ${a.item.date}`,
+        ...(type === 'newstore' && (announcementDate(a.item) || '9999') < dateKey ? [`- この店は ${announcementDate(a.item)} にすでにオープンしている（今日は ${dateKey}）。「オープンします」「OPEN 予定」のような予定の書き方はせず、もう使える店として紹介する。`] : []),
         `- 本文:\n${a.text}`,
         `この記事の告知は ${a.round || 1} 回目（全 ${total} 回）。${(a.round || 1) > 1 ? ((a.previous || []).length ? '前回までの告知文と、書き出し・切り口・取り上げる事実の順番・使い方の例・締めを変える（同じ文・同じ言い回しは使わない）:' : '前回の告知とは書き出し・切り口・使い方の例を変える（前回の文は残っていない）。') : '1 回目なので、何がいつどこで始まるかを分かりやすく。'}`,
         ...(a.previous || []).map((p, k) => `  前回${k + 1}: ${String(p).replace(/\n/g, ' ')}`),

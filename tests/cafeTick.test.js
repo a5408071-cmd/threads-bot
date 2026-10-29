@@ -265,3 +265,18 @@ test('型を指定した告知（type=media）は、その種類の記事だけ�
   await runCafeTick({ ...d, forceType: 'media' });
   expect(d.site.announcement).toHaveBeenCalledWith(MEDIA_ITEM);
 });
+
+test('CAFE_ANNOUNCE_EXTRA_URLS の記事を pendingAnnouncements の include に渡す（; 区切り）', async () => {
+  const d = deps({ mode: 'dry', env: { CAFE_ANNOUNCE_EXTRA_URLS: 'https://selfcafe.jp/newstore/a/; https://selfcafe.jp/newstore/b/' } });
+  await runCafeTick(d);
+  expect(d.site.pendingAnnouncements).toHaveBeenCalledWith('2026-10-29', { include: ['https://selfcafe.jp/newstore/a/', 'https://selfcafe.jp/newstore/b/'] });
+});
+
+test('OPEN 日が過ぎた新店舗の告知は「すでにオープンしている」と伝える（予定の書き方にしない）', async () => {
+  const OLD = { url: 'https://selfcafe.jp/newstore/202609273245/', date: '2026-09-27', category: '新店舗情報', title: '名古屋市中川区に「セルフカフェ高畑店」10月5日(月)17:00OPEN' };
+  const d = deps({ news: [OLD] });
+  d.site.announcement = jest.fn(async () => ({ ...ANNOUNCE, item: OLD }));
+  await d.store.setToken(TOKEN);
+  await runCafeTick(d);
+  expect(d.writer.writePost.mock.calls[0][0].facts).toMatch(/すでにオープンしている/);
+});

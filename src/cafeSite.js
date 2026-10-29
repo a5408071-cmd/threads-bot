@@ -248,10 +248,11 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
   }
 
   /** 告知してよい新着記事（OPEN 日・終わりの日が近い順） */
-  async function pendingAnnouncements(today) {
+  // include: 期間外でも告知する記事の URL（2026-10-29 社長「大垣の記事が反応いいので…高畑と安城と本陣もそれぞれ載せておいて」＝OPEN 後の店も）
+  async function pendingAnnouncements(today, { include = [] } = {}) {
     let media = [];
     try { media = parseMediaList(await getText(MEDIA_URL)); } catch (e) { console.warn(`[threads] CAFE_MEDIA_LIST_FAILED ${e.message}`); } // 読めなくても新着の告知は止めない
-    const items = [...parseNewsList(await getText(NEWS_URL)), ...media].filter((i) => isAnnounceable(i, today));
+    const items = [...parseNewsList(await getText(NEWS_URL)), ...media].filter((i) => isAnnounceable(i, today) || include.includes(i.url));
     return items.sort((a, b) => String(announcementDate(a) || a.date).localeCompare(String(announcementDate(b) || b.date)));
   }
 
