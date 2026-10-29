@@ -263,7 +263,7 @@ test('型を指定した告知（type=media）は、その種類の記事だけ�
   const MEDIA_ITEM = { url: 'https://selfcafe.jp/media-information/202610213449/', date: '2026-10-21', category: 'メディア掲載', title: '【メディア情報】東洋経済オンラインに掲載されました。', tags: [] };
   const d = deps({ news: [NEWS_ITEM, MEDIA_ITEM], mode: 'dry' });
   await runCafeTick({ ...d, forceType: 'media' });
-  expect(d.site.announcement).toHaveBeenCalledWith(MEDIA_ITEM);
+  expect(d.site.announcement).toHaveBeenCalledWith(MEDIA_ITEM, { multi: false });
 });
 
 test('CAFE_ANNOUNCE_EXTRA_URLS の記事を pendingAnnouncements の include に渡す（; 区切り）', async () => {
@@ -279,4 +279,22 @@ test('OPEN 日が過ぎた新店舗の告知は「すでにオープンしてい
   await d.store.setToken(TOKEN);
   await runCafeTick(d);
   expect(d.writer.writePost.mock.calls[0][0].facts).toMatch(/すでにオープンしている/);
+});
+
+test('OPEN 済みの新店の告知は写真を複数（カルーセル）。OPEN 前は 1 枚（2026-10-29 社長「既にオープンしてる店舗だったら写真複数使うようにして」）', async () => {
+  const OLD = { url: 'https://selfcafe.jp/newstore/202609273245/', date: '2026-09-27', category: '新店舗情報', title: '名古屋市中川区に「セルフカフェ高畑店」10月5日(月)17:00OPEN' };
+  const P2 = { ...PHOTO, id: 'hp:y', url: 'https://selfcafe.jp/wp_control/wp-content/uploads/b.jpg' };
+  const d = deps({ news: [OLD] });
+  d.site.announcement = jest.fn(async (item, opts) => ({ ...ANNOUNCE, item, photo: PHOTO, ...(opts && opts.multi ? { photos: [PHOTO, P2] } : {}) }));
+  await d.store.setToken(TOKEN);
+  await runCafeTick({ ...d, forcePost: true });
+  expect(d.site.announcement.mock.calls[0][1]).toEqual({ multi: true });
+  expect(d.threads.publishPost.mock.calls[0][0].imageUrls).toEqual([PHOTO.url, P2.url]);
+  const d2 = deps({ news: [NEWS_ITEM] }); // 大垣は 10/31 OPEN（今日 10/29）
+  d2.site.announcement = jest.fn(async (item, opts) => ({ ...ANNOUNCE, item, photo: PHOTO, ...(opts && opts.multi ? { photos: [PHOTO, P2] } : {}) }));
+  await d2.store.setToken(TOKEN);
+  await runCafeTick({ ...d2, forcePost: true });
+  expect(d2.site.announcement.mock.calls[0][1]).toEqual({ multi: false });
+  expect(d2.threads.publishPost.mock.calls[0][0].imageUrl).toBe(PHOTO.url);
+  expect(d2.threads.publishPost.mock.calls[0][0].imageUrls).toBeUndefined();
 });

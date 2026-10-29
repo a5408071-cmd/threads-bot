@@ -113,7 +113,8 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
       .sort((x, y) => (Number(y.started) - Number(x.started)) || (x.k - y.k)) // 続き（2〜3 日目）を先に
       .map((x) => x.i);
     if (!items.length) return null;
-    const a = await site.announcement(items[0]);
+    const opened = kindOf(items[0]) === 'newstore' && (announcementDate(items[0]) || '9999') < dateKey; // OPEN 済みの新店は写真を複数に
+    const a = await site.announcement(items[0], { multi: opened });
     return a && { ...a, round: rec(items[0].url).days.length + 1, previous: rec(items[0].url).texts };
   };
   const markAnnounced = async (url, text) => {
@@ -144,7 +145,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
         ...(a.previous || []).map((p, k) => `  前回${k + 1}: ${String(p).replace(/\n/g, ' ')}`),
       ].join('\n');
       const w = await writer.writePost({ type, recent: [...(a.previous || []), ...recent.map((p) => p.text)], dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts, banned: CAFE_BANNED });
-      return { ...w, photo: a.photo, storeUrl: a.shopUrl, storeName: a.storeName, announceUrl: a.item.url, ...(a.linkUrl ? { linkUrl: a.linkUrl } : {}) };
+      return { ...w, photo: a.photo, ...(a.photos && a.photos.length >= 2 ? { photos: a.photos } : {}), storeUrl: a.shopUrl, storeName: a.storeName, announceUrl: a.item.url, ...(a.linkUrl ? { linkUrl: a.linkUrl } : {}) };
     }
     const type = forceType || pickCafeType(recent.map((p) => p.type));
     const picked = await site.pickPhoto({ recentUrls: recent.map((p) => p.storeUrl).filter(Boolean) });
@@ -158,7 +159,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     return { ...w, photo: picked.photo, storeUrl: picked.url, storeName: null };
   };
 
-  const publish = async (w) => threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}), ...(w.linkUrl ? { linkAttachment: w.linkUrl } : {}) });
+  const publish = async (w) => threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photos ? { imageUrls: w.photos.map((x) => x.url) } : w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}), ...(w.linkUrl ? { linkAttachment: w.linkUrl } : {}) });
   const record = async (w, r, extra = {}) => {
     // 公開できたら先に告知済みにする（後の保存で落ちても同じ記事を二度出さない）
     if (w.announceUrl) { try { await markAnnounced(w.announceUrl, w.text); } catch (e) { fail(`告知済みの記録に失敗: ${e.message}`); } }
@@ -174,14 +175,14 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     await store.savePost({ mediaId: r.mediaId, text: w.text, type: w.type, source: 'auto', permalink: r.permalink, postedAt: t.toISOString(), storeUrl: w.storeUrl, storeName: w.storeName, ...(w.tag ? { tag: w.tag } : {}), ...(w.photo ? { photoId: w.photo.id, photoName: w.photo.name } : {}), ...extra });
     out.posted.push({ mediaId: r.mediaId, permalink: r.permalink, type: w.type, store: w.storeName || '全店', ...(w.tag ? { tag: w.tag } : {}), ...extra });
     if (env.THREADS_COPY_TO_OWNER === 'true' || extra.manual) {
-      await tell(`📝 投稿しました（${w.storeName || '全店'}・${w.type}${w.photo ? '・📷 HP' : ''}${w.tag ? `・#${w.tag}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
+      await tell(`📝 投稿しました（${w.storeName || '全店'}・${w.type}${w.photos ? `・📷 HP ${w.photos.length}枚` : w.photo ? '・📷 HP' : ''}${w.tag ? `・#${w.tag}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
     }
   };
 
   if (mode === 'dry' || mode === 'test') {
     const w = await compose();
     if (!w.ok) { fail(`本文を作れなかった: ${w.reason}`); return out; }
-    out.preview = { text: w.text, type: w.type, tag: w.tag || null, store: w.storeName || '全店', storeUrl: w.storeUrl, photoUrl: w.photo ? w.photo.url : null };
+    out.preview = { text: w.text, type: w.type, tag: w.tag || null, store: w.storeName || '全店', storeUrl: w.storeUrl, photoUrl: w.photo ? w.photo.url : null, ...(w.photos ? { photoUrls: w.photos.map((x) => x.url) } : {}) };
     if (mode === 'test') await tell(`（テスト。投稿はしていません）\n${w.storeName || '全店'}・型: ${w.type}\n\n${w.text}`);
     return out;
   }

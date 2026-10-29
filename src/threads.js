@@ -14,6 +14,7 @@ const STATUS_POLL_MS = 5000;
 const STATUS_TIMEOUT_MS = 60000;
 // FINISHED の直後でも publish が「メディアが見つかりません」（code 24 / sub 4279009）を返すことがある（2026-10-29 19:38）。待ってやり直す
 const HTTP_TIMEOUT_MS = 30000;
+const CAROUSEL_MAX = 20; // Threads のカルーセルは 2〜20 枚
 const PUBLISH_RETRY_WAITS_MS = [10000, 20000]; // 合計30秒まで（iso-bot の post_to_threads は120秒で切る）
 
 function isMediaNotFound(e) {
@@ -41,22 +42,8 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
 
   const expiresAtFrom = (expiresIn) => new Date(now().getTime() + Number(expiresIn || 0) * 1000).toISOString();
 
-  /**
-   * @returns {Promise<{ok:true, mediaId, permalink}|{ok:false, error, stage}>}
-   */
-  async function publishPost({ token, userId, text, imageUrl = null, topicTag = null, replyToId = null, linkAttachment = null }) {
-    let containerId;
-    try {
-      const params = { media_type: imageUrl ? 'IMAGE' : 'TEXT', text, access_token: token };
-      if (imageUrl) params.image_url = imageUrl;
-      if (topicTag) params.topic_tag = String(topicTag).replace(/[#＃.&]/g, '').slice(0, 50); // Threads のトピックタグ（1 つ。. と & は不可）
-      if (replyToId) params.reply_to_id = String(replyToId); // 返信（コメントへの返事）
-      if (linkAttachment && !imageUrl) params.link_attachment = String(linkAttachment); // 文字だけの投稿にリンクのカード（メディア掲載の記事など）
-      containerId = (await post(`/${userId}/threads`, params)).id;
-      if (!containerId) return { ok: false, stage: 'container', error: 'コンテナ ID が返らなかった' };
-    } catch (e) {
-      return { ok: false, stage: 'container', error: metaError(e) };
-    }
+  /** コンテナが FINISHED になるのを待つ。だめなら {ok:false,...}、良ければ null */
+  async function waitFinished(containerId, token) {
     const started = now().getTime();
     for (;;) {
       let st;
@@ -65,11 +52,54 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
       } catch (e) {
         return { ok: false, stage: 'status', error: metaError(e) };
       }
-      if (st.status === 'FINISHED') break;
+      if (st.status === 'FINISHED') return null;
       if (st.status === 'ERROR' || st.status === 'EXPIRED') return { ok: false, stage: 'status', error: `${st.status}: ${st.error_message || '理由不明'}` };
       if (now().getTime() - started >= STATUS_TIMEOUT_MS) return { ok: false, stage: 'status', error: `${STATUS_TIMEOUT_MS / 1000}秒待っても ${st.status || '不明'} のまま` };
       await sleep(STATUS_POLL_MS);
     }
+  }
+
+  // imageUrls が 2 枚以上ならカルーセル（2026-10-29 社長「既にオープンしてる店舗だったら写真複数使うようにして」）:
+  // 写真ごとに is_carousel_item のコンテナ → media_type CAROUSEL・children でまとめたコンテナ → 公開
+  /**
+   * @returns {Promise<{ok:true, mediaId, permalink}|{ok:false, error, stage}>}
+   */
+  async function publishPost({ token, userId, text, imageUrl = null, imageUrls = null, topicTag = null, replyToId = null, linkAttachment = null }) {
+    const urls = (imageUrls || []).filter(Boolean).slice(0, CAROUSEL_MAX);
+    if (urls.length === 1 && !imageUrl) imageUrl = urls[0];
+    const carousel = urls.length >= 2;
+    let children = [];
+    if (carousel) {
+      for (const u of urls) {
+        try {
+          const id = (await post(`/${userId}/threads`, { media_type: 'IMAGE', image_url: u, is_carousel_item: true, access_token: token })).id;
+          if (!id) return { ok: false, stage: 'container', error: `写真のコンテナ ID が返らなかった（${u}）` };
+          children.push(id);
+        } catch (e) {
+          return { ok: false, stage: 'container', error: `写真 ${u}: ${metaError(e)}` };
+        }
+      }
+      for (const id of children) {
+        const bad = await waitFinished(id, token);
+        if (bad) return bad;
+      }
+    }
+    let containerId;
+    try {
+      const params = carousel
+        ? { media_type: 'CAROUSEL', children: children.join(','), text, access_token: token }
+        : { media_type: imageUrl ? 'IMAGE' : 'TEXT', text, access_token: token };
+      if (imageUrl && !carousel) params.image_url = imageUrl;
+      if (topicTag) params.topic_tag = String(topicTag).replace(/[#＃.&]/g, '').slice(0, 50); // Threads のトピックタグ（1 つ。. と & は不可）
+      if (replyToId) params.reply_to_id = String(replyToId); // 返信（コメントへの返事）
+      if (linkAttachment && !imageUrl && !carousel) params.link_attachment = String(linkAttachment); // 文字だけの投稿にリンクのカード（メディア掲載の記事など）
+      containerId = (await post(`/${userId}/threads`, params)).id;
+      if (!containerId) return { ok: false, stage: 'container', error: 'コンテナ ID が返らなかった' };
+    } catch (e) {
+      return { ok: false, stage: 'container', error: metaError(e) };
+    }
+    const bad = await waitFinished(containerId, token);
+    if (bad) return bad;
     let mediaId;
     for (let attempt = 0; ; attempt++) {
       try {

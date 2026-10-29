@@ -263,3 +263,34 @@ test('publishPost: linkAttachment は文字だけの投稿に link_attachment �
   await t.publishPost({ token: 'tk', userId: 'u1', text: 'x', imageUrl: 'https://a/b.jpg', linkAttachment: 'https://toyokeizai.net/' });
   expect(h.calls.filter((c) => /\/u1\/threads$/.test(c.url))[1].opts.link_attachment).toBeUndefined();
 });
+
+test('publishPost: imageUrls が 2 枚以上ならカルーセル（各写真を is_carousel_item で作り、children でまとめる）', async () => {
+  let n = 0;
+  const h = http([
+    { match: /\/u1\/threads$/, reply: () => ({ id: `c${++n}` }) },
+    { match: /\/c\d$/, reply: { status: 'FINISHED' } },
+    { match: /\/u1\/threads_publish$/, reply: { id: 'm1' } },
+    { match: /\/m1$/, reply: { permalink: 'p' } },
+  ]);
+  const t = createThreads({ http: h, env: {}, sleep: noSleep });
+  const r = await t.publishPost({ token: 'tk', userId: 'u1', text: 'hello', imageUrls: ['https://a/1.jpg', 'https://a/2.jpg'], topicTag: 'セルフカフェ' });
+  expect(r).toMatchObject({ ok: true, mediaId: 'm1' });
+  const creates = h.calls.filter((c) => /\/u1\/threads$/.test(c.url)).map((c) => c.opts);
+  expect(creates[0]).toMatchObject({ media_type: 'IMAGE', image_url: 'https://a/1.jpg', is_carousel_item: true });
+  expect(creates[1]).toMatchObject({ media_type: 'IMAGE', image_url: 'https://a/2.jpg', is_carousel_item: true });
+  expect(creates[0].text).toBeUndefined();
+  expect(creates[2]).toMatchObject({ media_type: 'CAROUSEL', children: 'c1,c2', text: 'hello', topic_tag: 'セルフカフェ' });
+  expect(h.calls.find((c) => /threads_publish/.test(c.url)).opts.creation_id).toBe('c3');
+});
+
+test('publishPost: imageUrls が 1 枚だけなら普通の写真投稿', async () => {
+  const h = http([
+    { match: /\/u1\/threads$/, reply: { id: 'c1' } },
+    { match: /\/c1$/, reply: { status: 'FINISHED' } },
+    { match: /\/u1\/threads_publish$/, reply: { id: 'm1' } },
+    { match: /\/m1$/, reply: { permalink: 'p' } },
+  ]);
+  const t = createThreads({ http: h, env: {}, sleep: noSleep });
+  await t.publishPost({ token: 'tk', userId: 'u1', text: 'x', imageUrls: ['https://a/1.jpg'] });
+  expect(h.calls[0].opts).toMatchObject({ media_type: 'IMAGE', image_url: 'https://a/1.jpg' });
+});

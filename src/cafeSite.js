@@ -17,6 +17,7 @@ const ARTICLE_MAX_AGE_DAYS = 30;
 const NEWSTORE_AFTER_OPEN_DAYS = 7;
 const CAMPAIGN_NO_DATE_DAYS = 14;
 const ENTRY_TEXT_MAX = 1200;
+const MULTI_PHOTO_MAX = 5; // OPEN 済みの新店の告知で使う写真の枚数の上限
 const PAID_LABELS = ['個室ブース', '会議室', '会員専用エリア', 'コピー機'];
 const ROW_KEYS = ['店舗名', '決済方法', '営業時間', '定休日', '席数', '住所', '駐車場', 'アクセス', 'アクセス方法', '有料サービス', 'Coffee'];
 const CACHE_MS = 6 * 60 * 60 * 1000;
@@ -241,6 +242,23 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
     return photo;
   }
 
+  /** OPEN 済みの新店の告知用: ギャラリーの先頭から取れる写真を最大 max 枚（jpg/png だけ） */
+  async function fetchPhotos(images, name, max = MULTI_PHOTO_MAX) {
+    const out = [];
+    for (const src of (images || [])) {
+      if (out.length >= max) break;
+      try {
+        const r = await client.get(src, { responseType: 'arraybuffer', timeout: 20000, maxContentLength: 8 * 1024 * 1024 });
+        const ct = String((r.headers && r.headers['content-type']) || '');
+        if (!/^image\/(jpeg|png)/.test(ct)) continue;
+        out.push({ id: `hp:${src}`, url: src, name, mediaType: ct.split(';')[0], bytes: Buffer.from(r.data) });
+      } catch (e) {
+        console.warn(`[threads] CAFE_PHOTO_FAILED ${src} ${e.message}`);
+      }
+    }
+    return out;
+  }
+
   /** ふだんの回の写真: 最近使っていない店の HP の写真 1 枚（店名は投稿に書かない） */
   async function pickPhoto({ recentUrls = [] } = {}) {
     const { url, photo } = await pickStore({ recentUrls });
@@ -257,7 +275,8 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
   }
 
   /** 記事の本文・店名・写真（店舗ページのギャラリー。開店前で無ければ null） */
-  async function announcement(item) {
+  // multi: OPEN 済みの新店は写真を複数（カルーセル）にする（2026-10-29 社長）。取れたのが 1 枚以下なら photos は付けない
+  async function announcement(item, { multi = false } = {}) {
     if (item.category === MEDIA_CATEGORY) {
       const m = parseMediaEntry(await getText(item.url));
       return { item, text: m.text, shopUrl: null, storeName: null, photo: null, kind: 'media', linkUrl: m.linkUrl }; // 写真は付けず、記事のリンクのカード（link_attachment）で見せる
@@ -265,14 +284,21 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
     const entry = parseNewsEntry(await getText(item.url));
     let storeName = (item.title.match(/「([^」]+)」/) || [])[1] || null;
     let photo = null;
+    let photos = null;
     if (entry.shopUrl) {
       try {
         const facts = await storeFacts(entry.shopUrl);
         storeName = facts.name || storeName;
-        photo = await fetchPhoto(facts.images, `HP: ${storeName || entry.shopUrl}`);
+        const name = `HP: ${storeName || entry.shopUrl}`;
+        if (multi) {
+          const got = await fetchPhotos(facts.images, name);
+          if (got.length >= 2) { photos = got; photo = got[0]; } else photo = got[0] || null;
+        } else {
+          photo = await fetchPhoto(facts.images, name);
+        }
       } catch (e) { console.warn(`[threads] CAFE_ANNOUNCE_SHOP_FAILED ${entry.shopUrl} ${e.message}`); }
     }
-    return { item, text: entry.text, shopUrl: entry.shopUrl, storeName, photo, kind: ANNOUNCE_CATEGORIES[item.category] };
+    return { item, text: entry.text, shopUrl: entry.shopUrl, storeName, photo, ...(photos ? { photos } : {}), kind: ANNOUNCE_CATEGORIES[item.category] };
   }
 
   return { listStores, storeFacts, pickStore, pickPhoto, pendingAnnouncements, announcement };

@@ -150,3 +150,20 @@ test('pendingAnnouncements: include に入れた記事は期間外でも告知�
   const r = await site.pendingAnnouncements('2026-12-31', { include: ['https://selfcafe.jp/newstore/202610133411/'] });
   expect(r.map((i) => i.url)).toEqual(['https://selfcafe.jp/newstore/202610133411/']);
 });
+
+test('announcement(item, { multi: true }): 店舗ページの写真を複数（最大 5 枚）取る。1 枚目は photo にも', async () => {
+  const NEWSTORE = { url: 'https://selfcafe.jp/newstore/202609273245/', date: '2026-09-27', category: '新店舗情報', title: '名古屋市中川区に「セルフカフェ高畑店」10月5日(月)17:00OPEN' };
+  const entryHtml = '<div class="entryBody"><p>高畑店がオープン</p><a href="https://selfcafe.jp/shop/aichi/fujigaoka/">店舗</a></div><div class="entryNavi">';
+  const http = { get: jest.fn(async (url) => {
+    if (url === NEWSTORE.url) return { data: entryHtml };
+    if (/\/shop\/aichi\//.test(url)) return { data: PAGE };
+    if (/uploads/.test(url)) return { status: 200, headers: { 'content-type': 'image/jpeg' }, data: Buffer.from('img') };
+    throw new Error('unexpected ' + url);
+  }) };
+  const site = createCafeSite({ http, rng: () => 0 });
+  const a = await site.announcement(NEWSTORE, { multi: true });
+  expect(a.photos.map((p) => p.url)).toEqual(['https://selfcafe.jp/wp_control/wp-content/uploads/2026/02/a.jpg', 'https://selfcafe.jp/wp_control/wp-content/uploads/2026/02/b.png']);
+  expect(a.photo.url).toBe(a.photos[0].url);
+  const one = await site.announcement(NEWSTORE);
+  expect(one.photos).toBeUndefined();
+});
