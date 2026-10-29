@@ -12,6 +12,14 @@ const SCOPES = ['threads_basic', 'threads_content_publish', 'threads_read_replie
 const POST_METRICS = ['views', 'likes', 'replies', 'reposts', 'quotes'];
 const STATUS_POLL_MS = 5000;
 const STATUS_TIMEOUT_MS = 60000;
+// FINISHED の直後でも publish が「メディアが見つかりません」（code 24 / sub 4279009）を返すことがある（2026-10-29 19:38）。待ってやり直す
+const HTTP_TIMEOUT_MS = 30000;
+const PUBLISH_RETRY_WAITS_MS = [10000, 20000]; // 合計30秒まで（iso-bot の post_to_threads は120秒で切る）
+
+function isMediaNotFound(e) {
+  const er = e && e.response && e.response.data && e.response.data.error;
+  return Boolean(er && Number(er.code) === 24 && Number(er.error_subcode) === 4279009);
+}
 
 function metaError(e) {
   const er = e && e.response && e.response.data && e.response.data.error;
@@ -24,8 +32,9 @@ function metaError(e) {
 function createThreads({ http, env = process.env, now = () => new Date(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
   const client = http || require('axios');
 
-  const post = async (path, params) => (await client.post(`${BASE}${path}`, null, { params })).data;
-  const get = async (path, params) => (await client.get(`${BASE}${path}`, { params })).data;
+  // Meta が応答しないときに上限なく待たない
+  const post = async (path, params) => (await client.post(`${BASE}${path}`, null, { params, timeout: HTTP_TIMEOUT_MS })).data;
+  const get = async (path, params) => (await client.get(`${BASE}${path}`, { params, timeout: HTTP_TIMEOUT_MS })).data;
   // トークン関係だけは公式の例どおりバージョン無し（graph.threads.net/oauth/access_token など）
   const postRoot = async (path, params) => (await client.post(`${ROOT}${path}`, null, { params })).data;
   const getRoot = async (path, params) => (await client.get(`${ROOT}${path}`, { params })).data;
@@ -61,11 +70,16 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
       await sleep(STATUS_POLL_MS);
     }
     let mediaId;
-    try {
-      mediaId = (await post(`/${userId}/threads_publish`, { creation_id: containerId, access_token: token })).id;
-      if (!mediaId) return { ok: false, stage: 'publish', error: '投稿 ID が返らなかった' };
-    } catch (e) {
-      return { ok: false, stage: 'publish', error: metaError(e) };
+    for (let attempt = 0; ; attempt++) {
+      try {
+        mediaId = (await post(`/${userId}/threads_publish`, { creation_id: containerId, access_token: token })).id;
+        if (!mediaId) return { ok: false, stage: 'publish', error: '投稿 ID が返らなかった' };
+        break;
+      } catch (e) {
+        if (!isMediaNotFound(e) || attempt >= PUBLISH_RETRY_WAITS_MS.length) return { ok: false, stage: 'publish', error: metaError(e) };
+        console.warn(`[threads] PUBLISH_RETRY container=${containerId} attempt=${attempt + 1}: ${metaError(e)}`);
+        await sleep(PUBLISH_RETRY_WAITS_MS[attempt]);
+      }
     }
     try {
       const m = await get(`/${mediaId}`, { fields: 'permalink', access_token: token });

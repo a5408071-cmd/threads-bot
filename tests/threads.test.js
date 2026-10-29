@@ -207,3 +207,45 @@ test('keywordSearch は /keyword_search を q と search_type で呼び、投稿
   expect(h.calls[0].opts).toMatchObject({ q: 'ゴルフ', search_type: 'RECENT', access_token: 'tk' });
   expect(h.calls[0].opts.fields).toMatch(/id,text,username,permalink,timestamp/);
 });
+
+describe('publish の「メディアが見つかりません」（code 24 / 4279009）は待ってやり直す（2026-10-29 19:38 の失敗）', () => {
+  const notFound = () => { const e = new Error('400'); e.response = { data: { error: { message: 'The requested resource does not exist', code: 24, error_subcode: 4279009 } } }; return e; };
+  test('1回目が見つからない → 待って2回目で公開できれば ok', async () => {
+    let n = 0;
+    const slept = [];
+    const h = http([
+      { match: /\/u1\/threads$/, reply: { id: 'c1' } },
+      { match: /\/c1$/, reply: { status: 'FINISHED' } },
+      { match: /\/u1\/threads_publish$/, reply: () => { n += 1; if (n === 1) throw notFound(); return { id: 'm1' }; } },
+      { match: /\/m1$/, reply: { permalink: 'https://p' } },
+    ]);
+    const t = createThreads({ http: h, env: {}, sleep: async (ms) => { slept.push(ms); } });
+    const r = await t.publishPost({ token: 'tk', userId: 'u1', text: 'x' });
+    expect(r).toMatchObject({ ok: true, mediaId: 'm1' });
+    expect(n).toBe(2);
+    expect(slept).toContain(10000);
+  });
+  test('3回とも見つからなければ ok:false stage publish', async () => {
+    const h = http([
+      { match: /\/u1\/threads$/, reply: { id: 'c1' } },
+      { match: /\/c1$/, reply: { status: 'FINISHED' } },
+      { match: /\/u1\/threads_publish$/, reply: () => { throw notFound(); } },
+    ]);
+    const t = createThreads({ http: h, env: {}, sleep: noSleep });
+    const r = await t.publishPost({ token: 'tk', userId: 'u1', text: 'x' });
+    expect(r).toMatchObject({ ok: false, stage: 'publish' });
+    expect(h.calls.filter((c) => /threads_publish/.test(c.url)).length).toBe(3);
+  });
+  test('別のエラーはやり直さない', async () => {
+    const e = new Error('400'); e.response = { data: { error: { message: 'API access blocked.', code: 200 } } };
+    const h = http([
+      { match: /\/u1\/threads$/, reply: { id: 'c1' } },
+      { match: /\/c1$/, reply: { status: 'FINISHED' } },
+      { match: /\/u1\/threads_publish$/, reply: e },
+    ]);
+    const t = createThreads({ http: h, env: {}, sleep: noSleep });
+    const r = await t.publishPost({ token: 'tk', userId: 'u1', text: 'x' });
+    expect(r).toMatchObject({ ok: false, stage: 'publish' });
+    expect(h.calls.filter((c) => /threads_publish/.test(c.url)).length).toBe(1);
+  });
+});
