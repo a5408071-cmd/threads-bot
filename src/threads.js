@@ -14,8 +14,11 @@ const STATUS_POLL_MS = 5000;
 const STATUS_TIMEOUT_MS = 60000;
 
 function metaError(e) {
-  const m = e && e.response && e.response.data && e.response.data.error && e.response.data.error.message;
-  return m || (e && e.message) || String(e);
+  const er = e && e.response && e.response.data && e.response.data.error;
+  if (!er || !er.message) return (e && e.message) || String(e);
+  // 制限・停止の理由は code / error_subcode / error_user_msg にしか出ないことがある（2026-10-29 「API access blocked.」の調査）
+  const extra = [er.code != null ? `code=${er.code}` : '', er.error_subcode != null ? `sub=${er.error_subcode}` : '', er.error_user_title || '', er.error_user_msg || ''].filter(Boolean).join(' ');
+  return extra ? `${er.message}（${extra}）` : er.message;
 }
 
 function createThreads({ http, env = process.env, now = () => new Date(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
