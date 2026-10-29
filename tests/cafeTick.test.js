@@ -28,10 +28,13 @@ function deps(over = {}) {
   };
 }
 
-test('公式の枠は昼 11:00〜13:30・夕 17:00〜20:00 の 2 本（1 本少ない日は無い）', () => {
+test('公式の枠は 1 日 5 本（朝・昼前・昼過ぎ・夕・夜。2026-10-29 社長「毎日5投稿いける」）、間は 90 分以上、1 本少ない日は無い', () => {
   for (let k = 0; k < 100; k++) {
     const { slots } = drawSlots('2026-10-29', () => ((k * 0.37) + 0.13) % 1, { windows: CAFE_WINDOWS, oneLess: false });
-    expect(slots).toHaveLength(2);
+    expect(slots).toHaveLength(5);
+    const mins = slots.map((s) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3)));
+    for (let i = 1; i < mins.length; i++) expect(mins[i] - mins[i - 1]).toBeGreaterThanOrEqual(90);
+    expect(slots[0] >= '07:00' && slots[4] <= '21:30').toBe(true);
   }
 });
 
