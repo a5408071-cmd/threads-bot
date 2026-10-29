@@ -44,3 +44,58 @@ test('pickStore: 写真が 1 枚も取れなければ photo は null（事実だ
   expect(r.facts.name).toBe('セルフカフェ 藤が丘店');
   expect(r.photo).toBeNull();
 });
+
+// 2026-10-29 社長「全店舗に関係する話をしてるのに特定の店舗出すのはおかしい 特定の店舗は新店舗もしくは新しい取り組みがある場合のみ」
+const { parseNewsList, parseNewsEntry, announcementDate, isAnnounceable } = require('../src/cafeSite');
+const NEWS = `<div class="news-list">
+<article class="news-listItem"> <a href="https://selfcafe.jp/newstore/202610133411/"> <p class="news-listItem_date"><time datetime="2026-10-13">2026.10.13</time></p> <p class="news-listItem_category" style="background:#ffe44c;">新店舗情報</p> <h3 class="news-listItem_title">岐阜県大垣市に「セルフカフェイオンタウン大垣店」10月31日(土)10:30OPEN</h3> </a> </article>
+<article class="news-listItem"> <a href="https://selfcafe.jp/campaign/202610083302/"> <p class="news-listItem_date"><time datetime="2026-10-08">2026.10.08</time></p> <p class="news-listItem_category" style="background:#f00;">キャンペーン</p> <h3 class="news-listItem_title">【延長決定】サブスク初期費用0円キャンペーン10月12日（月・祝）まで</h3> </a> </article>
+<article class="news-listItem"> <a href="https://selfcafe.jp/information/202609103176/"> <p class="news-listItem_date"><time datetime="2026-09-10">2026.09.10</time></p> <p class="news-listItem_category">お知らせ</p> <h3 class="news-listItem_title">【重要】メンバーシップ（サブスク）のお支払い方法変更について</h3> </a> </article>
+</div>`;
+const ENTRY = `<main class="l-contents" role="main"> <article class="news-entry"> <h1 class="news-entryData_title">岐阜県大垣市に「セルフカフェイオンタウン大垣店」10月31日(土)10:30OPEN</h1> </div> <div class="entryBody txtbox base--ss sectionbox"> <p><strong>セルフカフェイオンタウン大垣店が2026年10月31日(土)10:30OPEN</strong></p> <p>イオンタウン大垣内に、Wi-Fi・電源完備の無人カフェがオープンします。<br /> お買い物の合間に。</p> <p>営業時間：10:30～22:00</p> <p>▶店舗詳細はこちら：<a href="https://selfcafe.jp/shop/gifu/aeontown-ogaki/">https://selfcafe.jp/shop/gifu/aeontown-ogaki/</a></p> </div> <div class="entryNaviWrap"><a href="https://selfcafe.jp/newstore/202610133404/">前の記事へ</a></div></article></main>`;
+
+test('parseNewsList: 日付・種類（新店舗情報／キャンペーン／お知らせ）・見出し・URL', () => {
+  const l = parseNewsList(NEWS);
+  expect(l).toHaveLength(3);
+  expect(l[0]).toEqual({ url: 'https://selfcafe.jp/newstore/202610133411/', date: '2026-10-13', category: '新店舗情報', title: '岐阜県大垣市に「セルフカフェイオンタウン大垣店」10月31日(土)10:30OPEN' });
+  expect(l[1].category).toBe('キャンペーン');
+});
+
+test('parseNewsEntry: 本文の文字と店舗ページのリンク（前後の記事へのリンクは拾わない）', () => {
+  const e = parseNewsEntry(ENTRY);
+  expect(e.text).toMatch(/お買い物の合間に/);
+  expect(e.text).toMatch(/営業時間：10:30～22:00/);
+  expect(e.shopUrl).toBe('https://selfcafe.jp/shop/gifu/aeontown-ogaki/');
+});
+
+test('announcementDate: 見出しの「M月D日」を記事の年で読む（年をまたぐなら翌年）', () => {
+  expect(announcementDate({ date: '2026-10-13', title: '「イオンタウン大垣店」10月31日(土)OPEN' })).toBe('2026-10-31');
+  expect(announcementDate({ date: '2026-12-20', title: '「X店」1月9日(土)OPEN' })).toBe('2027-01-09');
+  expect(announcementDate({ date: '2026-10-13', title: '日付なし' })).toBeNull();
+});
+
+test('isAnnounceable: 新店舗は OPEN 日の 7 日後まで、キャンペーンは終わりの日まで、お知らせは出さない。記事が 30 日より古いものも出さない', () => {
+  const [ns, cp, info] = parseNewsList(NEWS);
+  expect(isAnnounceable(ns, '2026-10-29')).toBe(true);
+  expect(isAnnounceable(ns, '2026-11-07')).toBe(true);
+  expect(isAnnounceable(ns, '2026-11-08')).toBe(false);
+  expect(isAnnounceable(cp, '2026-10-12')).toBe(true);
+  expect(isAnnounceable(cp, '2026-10-13')).toBe(false);
+  expect(isAnnounceable(info, '2026-09-11')).toBe(false);
+  expect(isAnnounceable({ ...ns, date: '2026-08-01', title: '「X店」12月1日OPEN' }, '2026-10-29')).toBe(false);
+  expect(isAnnounceable({ ...cp, title: '日付の無いキャンペーン' }, '2026-10-20')).toBe(true); // 日付が無ければ記事から 14 日まで
+  expect(isAnnounceable({ ...cp, title: '日付の無いキャンペーン' }, '2026-10-23')).toBe(false);
+});
+
+test('announcementDate（レビュー指摘）: キャンペーンは最後の日付、新店舗は OPEN の直前、数か月前の月は翌年にしない', () => {
+  expect(announcementDate({ date: '2026-10-01', category: 'キャンペーン', title: '10月1日〜10月12日まで初期費用0円' })).toBe('2026-10-12');
+  expect(announcementDate({ date: '2026-10-01', category: '新店舗情報', title: '9月の好評を受け「X店」11月2日OPEN（説明会10月20日）' })).toBe('2026-11-02');
+  expect(announcementDate({ date: '2026-10-08', category: 'キャンペーン', title: '9月30日までのキャンペーン' })).toBe('2026-09-30');
+});
+
+test('parseNewsEntry（レビュー指摘）: 本文に入れ子の div があっても店舗リンクまで読む', () => {
+  const html = '<main><article><div class="entryBody txtbox"><div class="wp-block-image"><img src="a.jpg"></div><p>本文です</p><p><a href="https://selfcafe.jp/shop/gifu/aeontown-ogaki/">店</a></p></div><div class="entryNaviWrap"><a href="https://selfcafe.jp/shop/aichi/x/">別</a></div></article></main>';
+  const e = parseNewsEntry(html);
+  expect(e.shopUrl).toBe('https://selfcafe.jp/shop/gifu/aeontown-ogaki/');
+  expect(e.text).toMatch(/本文です/);
+});

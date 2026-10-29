@@ -7,7 +7,6 @@
  */
 const slots = require('./slots');
 const personaCafe = require('./personaCafe');
-const { factsText } = require('./cafeSite');
 const { daysLeft, REFRESH_BEFORE_DAYS } = require('./tick');
 
 const CAFE_WINDOWS = [
@@ -18,12 +17,22 @@ const RECENT_POSTS = 14;
 const LABEL = '【公式】';
 const CAFE_BANNED = ['鈴木大基', 'ウッドデザインパーク', 'wooddesignpark', 'wood-designpark'];
 const TOKEN_ALERT_HOURS = 12;
+// ふだんの回で店名・駅名を書いたら書き直し（写真の看板から拾うことがあるため。プロンプトだけに頼らない）
+const STORE_NAME_RE = /セルフカフェ\s*[^\s、。！？!?「」]{1,12}店/;
+const STATION_RE = /「[^」]+」駅|[一-龥ァ-ヶ][一-龥ぁ-んァ-ヶー]{0,7}駅/g; // 藤が丘駅・南柏駅・「栄」駅
+const GENERIC_STATION_RE = /(最寄り?|主要|ターミナル|各|近く|大きな|乗換|乗り換え)駅$|[のはをにでとやも]/; // 一般語と、助詞をまたいだ取りすぎは除く
+function noStoreCheck(text) {
+  const s = String(text || '');
+  const m = s.match(STORE_NAME_RE) || [...s.matchAll(STATION_RE)].find((x) => x[0].startsWith('「') || !GENERIC_STATION_RE.test(x[0]));
+  return m ? { ok: false, reason: `ふだんの回なのに店名・駅名（${m[0]}）が入っている。特定の店・駅・地名は書かず全店共通の話にする` } : { ok: true };
+}
+const GENERAL_FACTS = '今回は特定の店を紹介しない回です。店名・駅名・地名・エリア名は書かない。個室ブース・会議室・会員専用エリア・コピー機は店によって無いので書かない。全店共通の事実（ドリンク 1 杯で時間無制限・Wi-Fi・電源・無人・月額のサブスク）の範囲で書く。写真から店名や場所を書かない。';
 
 function pickCafeType(recentTypes, rng = Math.random) {
   const avoid = new Set((recentTypes || []).slice(0, 2));
   let pool = personaCafe.TYPES.filter((t) => !avoid.has(t));
   if (!pool.length) pool = personaCafe.TYPES.slice();
-  pool = [...pool, ...pool.filter((t) => t === 'store' || t === 'work')]; // 店舗紹介と仕事での使い方を 2 倍
+  pool = [...pool, ...pool.filter((t) => t === 'work' || t === 'study')]; // 仕事・勉強での使い方を 2 倍
   return pool[Math.floor(rng() * pool.length)];
 }
 
@@ -63,28 +72,60 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   const due = slots.dueSlot(day, t, { graceMin: grace });
   out.due = due;
 
+  // 店名を出すのは公式サイトの新着（新店舗・キャンペーン）を告知する回だけ。1 日 1 本まで、同じ記事は 1 回（2026-10-29 社長）
+  const pickAnnouncement = async ({ force = false } = {}) => {
+    if (env.CAFE_ANNOUNCE === 'false') return null;
+    const done = ((await store.getConfig('announced')) || {}).urls || {};
+    if (!force && Object.values(done).includes(dateKey)) return null;
+    const items = (await site.pendingAnnouncements(dateKey)).filter((i) => !done[i.url]);
+    return items.length ? site.announcement(items[0]) : null;
+  };
+  const markAnnounced = async (url) => {
+    const cur = ((await store.getConfig('announced')) || {}).urls || {};
+    await store.setConfig('announced', { urls: { ...cur, [url]: dateKey } });
+  };
+
   const compose = async () => {
     const recent = await store.recentPosts(RECENT_POSTS);
+    const wantAnnounce = !forceType || personaCafe.ANNOUNCE_TYPES.includes(forceType);
+    let a = null;
+    if (wantAnnounce) {
+      try { a = await pickAnnouncement({ force: Boolean(forceType) }); } catch (e) { console.warn(`[threads] CAFE_ANNOUNCE_FAILED ${e.message}`); }
+    }
+    if (forceType && personaCafe.ANNOUNCE_TYPES.includes(forceType) && !a) return { ok: false, reason: '告知できる新店舗・キャンペーンの記事が無い', type: forceType };
+    if (a) {
+      const type = a.kind || (a.item.category === 'キャンペーン' ? 'campaign' : 'newstore');
+      const facts = [
+        `今回は公式サイト（selfcafe.jp）の「${a.item.category}」の記事を告知する回です。ここにある事実だけを使う（無い設備・数字・料金・条件は書かない）。`,
+        `- 見出し: ${a.item.title}`,
+        `- 記事の日付: ${a.item.date}`,
+        `- 本文:\n${a.text}`,
+      ].join('\n');
+      const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts, banned: CAFE_BANNED });
+      return { ...w, photo: a.photo, storeUrl: a.shopUrl, storeName: a.storeName, announceUrl: a.item.url };
+    }
     const type = forceType || pickCafeType(recent.map((p) => p.type));
-    const picked = await site.pickStore({ recentUrls: recent.map((p) => p.storeUrl).filter(Boolean) });
-    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts: factsText(picked.facts), banned: CAFE_BANNED });
-    return { ...w, photo: picked.photo, storeUrl: picked.url, storeName: picked.facts.name };
+    const picked = await site.pickPhoto({ recentUrls: recent.map((p) => p.storeUrl).filter(Boolean) });
+    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts: GENERAL_FACTS, banned: CAFE_BANNED, check: noStoreCheck });
+    return { ...w, photo: picked.photo, storeUrl: picked.url, storeName: null };
   };
 
   const publish = async (w) => threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}) });
   const record = async (w, r, extra = {}) => {
+    // 公開できたら先に告知済みにする（後の保存で落ちても同じ記事を二度出さない）
+    if (w.announceUrl) { try { await markAnnounced(w.announceUrl); } catch (e) { fail(`告知済みの記録に失敗: ${e.message}`); } }
     await store.savePost({ mediaId: r.mediaId, text: w.text, type: w.type, source: 'auto', permalink: r.permalink, postedAt: t.toISOString(), storeUrl: w.storeUrl, storeName: w.storeName, ...(w.tag ? { tag: w.tag } : {}), ...(w.photo ? { photoId: w.photo.id, photoName: w.photo.name } : {}), ...extra });
-    out.posted.push({ mediaId: r.mediaId, permalink: r.permalink, type: w.type, store: w.storeName, ...(w.tag ? { tag: w.tag } : {}), ...extra });
+    out.posted.push({ mediaId: r.mediaId, permalink: r.permalink, type: w.type, store: w.storeName || '全店', ...(w.tag ? { tag: w.tag } : {}), ...extra });
     if (env.THREADS_COPY_TO_OWNER === 'true' || extra.manual) {
-      await tell(`📝 投稿しました（${w.storeName || '?'}・${w.type}${w.photo ? '・📷 HP' : ''}${w.tag ? `・#${w.tag}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
+      await tell(`📝 投稿しました（${w.storeName || '全店'}・${w.type}${w.photo ? '・📷 HP' : ''}${w.tag ? `・#${w.tag}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
     }
   };
 
   if (mode === 'dry' || mode === 'test') {
     const w = await compose();
     if (!w.ok) { fail(`本文を作れなかった: ${w.reason}`); return out; }
-    out.preview = { text: w.text, type: w.type, tag: w.tag || null, store: w.storeName, storeUrl: w.storeUrl, photoUrl: w.photo ? w.photo.url : null };
-    if (mode === 'test') await tell(`（テスト。投稿はしていません）\n${w.storeName}・型: ${w.type}\n\n${w.text}`);
+    out.preview = { text: w.text, type: w.type, tag: w.tag || null, store: w.storeName || '全店', storeUrl: w.storeUrl, photoUrl: w.photo ? w.photo.url : null };
+    if (mode === 'test') await tell(`（テスト。投稿はしていません）\n${w.storeName || '全店'}・型: ${w.type}\n\n${w.text}`);
     return out;
   }
 
@@ -135,4 +176,4 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   return out;
 }
 
-module.exports = { runCafeTick, pickCafeType, CAFE_WINDOWS, LABEL, CAFE_BANNED };
+module.exports = { runCafeTick, pickCafeType, noStoreCheck, CAFE_WINDOWS, LABEL, CAFE_BANNED };

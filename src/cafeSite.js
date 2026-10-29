@@ -6,6 +6,13 @@
  *   解析は iso-bot の src/cafeStoreFacts.js と同じ考え方（無い店でも有料サービスが 4 つ全部並ぶので is-disabled を必ず見る）。
  */
 const SHOP_LIST_URL = 'https://selfcafe.jp/shop/';
+// 新着情報（2026-10-29 社長「特定の店舗は新店舗もしくは新しい取り組みがある場合のみ」）。種類は 新店舗情報／キャンペーン／お知らせ（2026-10-29 実測）
+const NEWS_URL = 'https://selfcafe.jp/news/';
+const ANNOUNCE_CATEGORIES = { 新店舗情報: 'newstore', キャンペーン: 'campaign' }; // お知らせ（支払い方法の変更など）は告知しない
+const ARTICLE_MAX_AGE_DAYS = 30;
+const NEWSTORE_AFTER_OPEN_DAYS = 7;
+const CAMPAIGN_NO_DATE_DAYS = 14;
+const ENTRY_TEXT_MAX = 1200;
 const PAID_LABELS = ['個室ブース', '会議室', '会員専用エリア', 'コピー機'];
 const ROW_KEYS = ['店舗名', '決済方法', '営業時間', '定休日', '席数', '住所', '駐車場', 'アクセス', 'アクセス方法', '有料サービス', 'Coffee'];
 const CACHE_MS = 6 * 60 * 60 * 1000;
@@ -92,6 +99,59 @@ function parseStorePage(html, url) {
   };
 }
 
+const DAY = 86400000;
+const dayDiff = (a, b) => Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / DAY);
+const decode = (t) => String(t || '').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/&#0?38;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#8211;/g, '–');
+
+/** 新着情報の一覧（新しい順） */
+function parseNewsList(html) {
+  const out = [];
+  for (const m of String(html || '').matchAll(/<article class="news-listItem">([\s\S]*?)<\/article>/g)) {
+    const a = m[1];
+    const url = (a.match(/href="([^"]+)"/) || [])[1];
+    const date = (a.match(/datetime="(\d{4}-\d{2}-\d{2})"/) || [])[1];
+    const category = ((a.match(/news-listItem_category[^>]*>([^<]+)</) || [])[1] || '').trim();
+    const title = decode(((a.match(/news-listItem_title[^>]*>([^<]+)</) || [])[1] || '').trim());
+    if (url && date && title) out.push({ url, date, category, title });
+  }
+  return out;
+}
+
+/** 記事の本文（文字だけ）と、本文中の店舗ページへのリンク */
+function parseNewsEntry(html) {
+  // 本文の中に入れ子の <div> があっても切れないよう、次の目印（前後の記事のナビ・</article>）まで取る
+  const body = (String(html || '').match(/<div class="entryBody[^"]*">([\s\S]*?)(?:<div class="entryNavi|<\/article>)/) || [])[1] || '';
+  const shopUrl = (body.match(/href="(https:\/\/selfcafe\.jp\/shop\/[a-z]+\/[^/"]+\/)"/) || [])[1] || null;
+  const text = decode(body.replace(/<br\s*\/?>/g, '\n').replace(/<\/(p|h\d|li)>/g, '\n').replace(/<[^>]+>/g, ''))
+    .split('\n').map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n').slice(0, ENTRY_TEXT_MAX);
+  return { text, shopUrl };
+}
+
+/** 見出しの「M月D日」（OPEN 日・キャンペーンの終わり）を YYYY-MM-DD に。年は記事の日付から（月が戻れば翌年） */
+function announcementDate(item) {
+  const all = [...String(item.title || '').matchAll(/(\d{1,2})月(\d{1,2})日/g)];
+  if (!all.length) return null;
+  // 新店舗は「OPEN」の直前（無ければ最初）、キャンペーンは最後の日付（「10月1日〜10月12日まで」の終わり）
+  const title = String(item.title || '');
+  const openAt = title.search(/OPEN|オープン/i);
+  const before = openAt >= 0 ? all.filter((x) => x.index < openAt) : [];
+  const m = item.category === 'キャンペーン' ? all[all.length - 1] : (before.length ? before[before.length - 1] : all[0]);
+  const [y, am] = item.date.split('-').map(Number);
+  const mon = Number(m[1]); const day = Number(m[2]);
+  const year = am - mon > 6 ? y + 1 : y; // 12 月の記事に「1 月」→ 翌年。数か月前の月はその年のまま（過ぎた日として扱う）
+  return `${year}-${String(mon).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/** 今日（JST の YYYY-MM-DD）告知してよい記事か */
+function isAnnounceable(item, today) {
+  const kind = ANNOUNCE_CATEGORIES[item.category];
+  if (!kind) return false;
+  if (dayDiff(today, item.date) > ARTICLE_MAX_AGE_DAYS) return false;
+  const d = announcementDate(item);
+  if (kind === 'newstore') return d ? dayDiff(today, d) <= NEWSTORE_AFTER_OPEN_DAYS : dayDiff(today, item.date) <= CAMPAIGN_NO_DATE_DAYS;
+  return d ? dayDiff(today, d) <= 0 : dayDiff(today, item.date) <= CAMPAIGN_NO_DATE_DAYS;
+}
+
 /** AI に渡す「この店の事実」。ここに無い設備・数字は書かせない */
 function factsText(f) {
   const paid = PAID_LABELS.map((l) => `${l} ${f.paid[l] === true ? 'あり' : f.paid[l] === false ? 'なし' : '不明'}`).join('・');
@@ -131,24 +191,57 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
     const pool = fresh.length ? fresh : all;
     const url = pool[Math.floor(rng() * pool.length)];
     const facts = await storeFacts(url);
+    const photo = await fetchPhoto(facts.images, `HP: ${facts.name || url}`);
+    return { url, facts, photo };
+  }
+
+  /** 画像を 1 枚（jpg/png だけ。実際に取って確かめる）。どれも取れなければ null */
+  async function fetchPhoto(images, name) {
     let photo = null;
-    const imgs = facts.images.slice();
+    const imgs = (images || []).slice();
     const start = imgs.length ? Math.floor(rng() * imgs.length) : 0;
     for (const src of imgs.slice(start).concat(imgs.slice(0, start))) {
       try {
         const r = await client.get(src, { responseType: 'arraybuffer', timeout: 20000, maxContentLength: 8 * 1024 * 1024 });
         const ct = String((r.headers && r.headers['content-type']) || '');
         if (!/^image\/(jpeg|png)/.test(ct)) continue;
-        photo = { id: `hp:${src}`, url: src, name: `HP: ${facts.name || url}`, mediaType: ct.split(';')[0], bytes: Buffer.from(r.data) };
+        photo = { id: `hp:${src}`, url: src, name, mediaType: ct.split(';')[0], bytes: Buffer.from(r.data) };
         break;
       } catch (e) {
         console.warn(`[threads] CAFE_PHOTO_FAILED ${src} ${e.message}`);
       }
     }
-    return { url, facts, photo };
+    return photo;
   }
 
-  return { listStores, storeFacts, pickStore };
+  /** ふだんの回の写真: 最近使っていない店の HP の写真 1 枚（店名は投稿に書かない） */
+  async function pickPhoto({ recentUrls = [] } = {}) {
+    const { url, photo } = await pickStore({ recentUrls });
+    return { url, photo };
+  }
+
+  /** 告知してよい新着記事（OPEN 日・終わりの日が近い順） */
+  async function pendingAnnouncements(today) {
+    const items = parseNewsList(await getText(NEWS_URL)).filter((i) => isAnnounceable(i, today));
+    return items.sort((a, b) => String(announcementDate(a) || a.date).localeCompare(String(announcementDate(b) || b.date)));
+  }
+
+  /** 記事の本文・店名・写真（店舗ページのギャラリー。開店前で無ければ null） */
+  async function announcement(item) {
+    const entry = parseNewsEntry(await getText(item.url));
+    let storeName = (item.title.match(/「([^」]+)」/) || [])[1] || null;
+    let photo = null;
+    if (entry.shopUrl) {
+      try {
+        const facts = await storeFacts(entry.shopUrl);
+        storeName = facts.name || storeName;
+        photo = await fetchPhoto(facts.images, `HP: ${storeName || entry.shopUrl}`);
+      } catch (e) { console.warn(`[threads] CAFE_ANNOUNCE_SHOP_FAILED ${entry.shopUrl} ${e.message}`); }
+    }
+    return { item, text: entry.text, shopUrl: entry.shopUrl, storeName, photo, kind: ANNOUNCE_CATEGORIES[item.category] };
+  }
+
+  return { listStores, storeFacts, pickStore, pickPhoto, pendingAnnouncements, announcement };
 }
 
-module.exports = { createCafeSite, parseStoreList, parseStorePage, factsText, SHOP_LIST_URL };
+module.exports = { createCafeSite, parseStoreList, parseStorePage, factsText, parseNewsList, parseNewsEntry, announcementDate, isAnnounceable, SHOP_LIST_URL, NEWS_URL, ANNOUNCE_CATEGORIES };

@@ -20,7 +20,7 @@ test('pickType は直近 2 本の型を避ける', () => {
 test('pickType は金曜・土曜・日曜は invite が出やすい（1000 回で 2 割超）', () => {
   let n = 0;
   for (let i = 0; i < 1000; i++) if (pickType([], new Date('2026-10-30T03:00:00Z'), Math.random) === 'invite') n++; // 10/30 は金曜
-  expect(n).toBeGreaterThan(150); // 型が 8 つに増えたので 2/11（他の型の 2 倍）
+  expect(n).toBeGreaterThan(120); // 型が 13 に増えたので 3/19 くらい（他の型の 1.5〜3 倍）
 });
 
 test('checkText: 500 字超・URL・NG 語・似すぎ・空は落ちる', () => {
@@ -337,4 +337,12 @@ describe('{N} の漏れを防ぐ（レビュー指摘）', () => {
     const r = await writePost({ type: 'daily', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a });
     expect(r.text).toBe(LONG);
   });
+});
+
+test('writePost の check（呼ぶ側の追加検査）に落ちたら理由を添えて書き直し', async () => {
+  const a = fakeAnthropic([`${LONG}セルフカフェ栄店`, LONG]);
+  const check = (t) => (t.includes('栄店') ? { ok: false, reason: '店名が入っている' } : { ok: true });
+  const r = await writePost({ type: 'work', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a, check, banned: [] });
+  expect(r).toMatchObject({ ok: true, attempts: 2, text: LONG });
+  expect(JSON.stringify(a.messages.create.mock.calls[1][0].messages)).toMatch(/店名が入っている/);
 });

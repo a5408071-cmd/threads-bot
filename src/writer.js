@@ -190,7 +190,7 @@ ${text}`;
   ];
 }
 
-async function writePost({ type, recent = [], dateKey, env = {}, anthropic, photo = null, stockPhoto = false, persona: P = persona, facts = null, banned: bannedOverride = null }) {
+async function writePost({ type, recent = [], dateKey, env = {}, anthropic, photo = null, stockPhoto = false, persona: P = persona, facts = null, banned: bannedOverride = null, check: extraCheck = null }) {
   const banned = bannedOverride || parseBanned(env);
   const model = env.THREADS_MODEL || DEFAULT_MODEL;
   const reasons = [];
@@ -211,7 +211,8 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic, phot
     const cd = fillCountdown(body, targetDate, dateKey, type);
     const text = cd.ok ? cd.text : body;
     // 途中で切れた案（stop_reason=max_tokens）は空でなくても使わない
-    const c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : (!cd.ok ? cd : checkText(text, { banned, recent, minChars: photo ? MIN_CHARS : MIN_CHARS_TEXT_ONLY }));
+    let c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : (!cd.ok ? cd : checkText(text, { banned, recent, minChars: photo ? MIN_CHARS : MIN_CHARS_TEXT_ONLY }));
+    if (c.ok && extraCheck) c = extraCheck(text) || { ok: true }; // 呼ぶ側の追加の検査（公式のふだんの回で店名・駅名を出さない など）
     if (c.ok) return { ok: true, text, type, attempts: attempt, tag, ...(stockPhoto && photoQuery ? { photoQuery } : {}) };
     lastReason = c.reason;
     reasons.push(c.reason);
