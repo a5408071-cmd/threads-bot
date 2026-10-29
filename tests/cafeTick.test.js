@@ -78,15 +78,15 @@ test('新店舗・キャンペーンの記事があれば、その回は記事�
   expect(call.type).toBe('newstore');
   expect(call.facts).toMatch(/イオンタウン大垣/);
   expect(call.facts).toMatch(/10:30～22:00/);
-  expect(call.facts).toMatch(/1 回目（全 3 回）/);
+  expect(call.facts).toMatch(/1 回目（全 2 回）/);
   expect(d.notify.owner.mock.calls[0][0]).toMatch(/セルフカフェイオンタウン大垣店/);
 });
 
 // 2026-10-29 社長「新店舗の情報は3日は続けて 文章は都度変更で」
-test('同じ記事は 3 日続けて告知（1 日 1 回）。2 回目以降は前の告知文を渡して書き方を変えさせ、4 日目は出さない', async () => {
+test('新店の告知は 2 回まで: OPEN 前に 1 回・OPEN 当日以降に 1 回（2026-10-29 社長「3日は多いな 2回までにしよう 基本オープン前とオープン後もしくは当日」）', async () => {
   const store = memoryStore({ now: () => at('11:20'), prefix: 'threads_cafe_' });
   await store.setToken(TOKEN);
-  const days = ['2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01'];
+  const days = ['2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01']; // 大垣は 10/31 OPEN
   const types = [];
   for (const [i, day] of days.entries()) {
     const d = deps({ store, news: [NEWS_ITEM], now: at('11:20', day) });
@@ -95,23 +95,38 @@ test('同じ記事は 3 日続けて告知（1 日 1 回）。2 回目以降は�
     await runCafeTick(d);
     const call = d.writer.writePost.mock.calls[0][0];
     types.push(call.type);
-    if (i === 1) {
-      expect(call.facts).toMatch(/2 回目（全 3 回）/);
+    if (day === '2026-10-31') {
+      expect(call.facts).toMatch(/2 回目（全 2 回）/);
       expect(call.facts).toMatch(/告知文その1/);
+      expect(call.facts).toMatch(/今日オープン/);
       expect(call.recent).toContain('告知文その1。藤が丘');
     }
-    // 同じ日の 2 本目は同じ記事を出さない
     const again = deps({ store, news: [NEWS_ITEM], now: at('18:45', day) });
     await runCafeTick(again);
     expect(again.writer.writePost.mock.calls[0][0].type).not.toBe('newstore');
   }
-  expect(types.slice(0, 3)).toEqual(['newstore', 'newstore', 'newstore']);
-  expect(types[3]).not.toBe('newstore');
+  expect(types).toEqual(['newstore', expect.not.stringMatching(/^newstore$/), 'newstore', expect.not.stringMatching(/^newstore$/)]);
 });
 
-test('告知は 1 日 2 本まで（別々の記事）。続きの記事（2〜3 日目）を新しい記事より先に出す', async () => {
+test('OPEN 後に初めて見つけた新店（高畑など）は OPEN 後の 1 回だけ', async () => {
+  const OLD = { url: 'https://selfcafe.jp/newstore/202609273245/', date: '2026-09-27', category: '新店舗情報', title: '名古屋市中川区に「セルフカフェ高畑店」10月5日(月)17:00OPEN' };
+  const store = memoryStore({ now: () => at('11:20'), prefix: 'threads_cafe_' });
+  await store.setToken(TOKEN);
+  const types = [];
+  for (const day of ['2026-10-30', '2026-10-31']) {
+    const d = deps({ store, news: [OLD], now: at('11:20', day) });
+    d.site.announcement = jest.fn(async (item) => ({ ...ANNOUNCE, item }));
+    d.writer.writePost = jest.fn(async (o) => ({ ok: true, text: '高畑の告知', type: o.type, attempts: 1, tag: 'セルフカフェ' }));
+    await runCafeTick(d);
+    types.push(d.writer.writePost.mock.calls[0][0].type);
+  }
+  expect(types[0]).toBe('newstore');
+  expect(types[1]).not.toBe('newstore');
+});
+
+test('告知は 1 日 2 本まで（別々の記事）。OPEN 当日の記事を先に出す', async () => {
   const B = { ...NEWS_ITEM, url: 'https://selfcafe.jp/newstore/2/' };
-  const C = { ...NEWS_ITEM, url: 'https://selfcafe.jp/newstore/3/' };
+  const C = { ...NEWS_ITEM, url: 'https://selfcafe.jp/newstore/3/', title: '「セルフカフェC店」10月29日(水)OPEN' };
   const store = memoryStore({ now: () => at('11:20'), prefix: 'threads_cafe_' });
   await store.setToken(TOKEN);
   await store.setConfig('announced', { urls: { [C.url]: ['2026-10-28'] } });

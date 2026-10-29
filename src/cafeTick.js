@@ -24,7 +24,7 @@ const CAFE_BANNED = ['鈴木大基', 'ウッドデザインパーク', 'wooddesi
 const TOKEN_ALERT_HOURS = 12;
 const QUOTES_KEEP = 300; // 覚えておく名言の数
 const QUOTES_IN_PROMPT = 80; // AI に見せる数（新しい方から）
-const ANNOUNCE_DAYS = 3; // 同じ記事を何日続けて告知するか（CAFE_ANNOUNCE_DAYS で上書き）
+const ANNOUNCE_DAYS = 2; // 同じ記事を何回告知するか（CAFE_ANNOUNCE_DAYS で上書き）。2026-10-29 社長「3日は多いな 2回までにしよう」
 const ANNOUNCE_PER_DAY = 2; // 1 日に告知する本数の上限（5 本のうち。CAFE_ANNOUNCE_PER_DAY）
 // ふだんの回で店名・駅名を書いたら書き直し（写真の看板から拾うことがあるため。プロンプトだけに頼らない）
 const STORE_NAME_RE = /セルフカフェ\s*[^\s、。！？!?「」]{1,12}店/;
@@ -105,15 +105,23 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     if (!force && today >= perDay) return null;
     const rec = (u) => done[u] || { days: [], texts: [] };
     const daysFor = (i) => (i.category === 'メディア掲載' ? 1 : announceDays); // メディア掲載の紹介は 1 回だけ
+    // 新店は OPEN 前に 1 回・OPEN 当日以降に 1 回（同日 社長「基本オープン前とオープン後もしくは当日」）。OPEN 後に初めて見つけた店は OPEN 後の 1 回だけ
+    const openOf = (i) => (kindOf(i) === 'newstore' ? announcementDate(i) : null);
+    const phaseDone = (i) => {
+      const d = openOf(i);
+      if (!d) return false;
+      const after = dateKey >= d;
+      return rec(i.url).days.some((x) => (x >= d) === after);
+    };
     const include = String(env.CAFE_ANNOUNCE_EXTRA_URLS || '').split(/[;,]/).map((u) => u.trim()).filter(Boolean); // 期間外でも告知する記事
     const items = (await site.pendingAnnouncements(dateKey, { include }))
       .filter((i) => !kind || kindOf(i) === kind) // 型を指定したら（type=media など）その種類の記事だけ
-      .filter((i) => rec(i.url).days.length < daysFor(i) && (force || !rec(i.url).days.includes(dateKey)))
-      .map((i, k) => ({ i, k, started: rec(i.url).days.length > 0 }))
-      .sort((x, y) => (Number(y.started) - Number(x.started)) || (x.k - y.k)) // 続き（2〜3 日目）を先に
+      .filter((i) => rec(i.url).days.length < daysFor(i) && (force || (!rec(i.url).days.includes(dateKey) && !phaseDone(i))))
+      .map((i, k) => ({ i, k, openToday: openOf(i) === dateKey, started: rec(i.url).days.length > 0 }))
+      .sort((x, y) => (Number(y.openToday) - Number(x.openToday)) || (Number(y.started) - Number(x.started)) || (x.k - y.k)) // OPEN 当日の記事 → 続きの記事 → 新しい記事
       .map((x) => x.i);
     if (!items.length) return null;
-    const opened = kindOf(items[0]) === 'newstore' && (announcementDate(items[0]) || '9999') < dateKey; // OPEN 済みの新店は写真を複数に
+    const opened = kindOf(items[0]) === 'newstore' && (announcementDate(items[0]) || '9999') <= dateKey; // OPEN 当日・OPEN 済みの新店は写真を複数に
     const a = await site.announcement(items[0], { multi: opened });
     return a && { ...a, round: rec(items[0].url).days.length + 1, previous: rec(items[0].url).texts };
   };
@@ -139,6 +147,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
         `今回は公式サイト（selfcafe.jp）の「${a.item.category}」の記事を告知する回です。ここにある事実だけを使う（無い設備・数字・料金・条件は書かない）。`,
         `- 見出し: ${a.item.title}`,
         `- 記事の日付: ${a.item.date}`,
+        ...(type === 'newstore' && announcementDate(a.item) === dateKey ? [`- 今日オープンの日（${dateKey}）。「本日オープン」として、もう使える店として紹介する。`] : []),
         ...(type === 'newstore' && (announcementDate(a.item) || '9999') < dateKey ? [`- この店は ${announcementDate(a.item)} にすでにオープンしている（今日は ${dateKey}）。「オープンします」「OPEN 予定」のような予定の書き方はせず、もう使える店として紹介する。`] : []),
         `- 本文:\n${a.text}`,
         `この記事の告知は ${a.round || 1} 回目（全 ${total} 回）。${(a.round || 1) > 1 ? ((a.previous || []).length ? '前回までの告知文と、書き出し・切り口・取り上げる事実の順番・使い方の例・締めを変える（同じ文・同じ言い回しは使わない）:' : '前回の告知とは書き出し・切り口・使い方の例を変える（前回の文は残っていない）。') : '1 回目なので、何がいつどこで始まるかを分かりやすく。'}`,
