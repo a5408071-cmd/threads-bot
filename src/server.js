@@ -270,6 +270,24 @@ function createApp(deps = {}) {
     }
   });
 
+  // その日の枠を足す（?account=cafe&slots=16:58,18:07）。2026-10-29 社長「今日から5本にして」。過ぎた時刻・形の違う値は 400
+  app.get('/admin/add-slots', async (req, res) => {
+    if (!gate(req, res)) return;
+    try {
+      const { jstDateKey, jstHm } = require('./slots');
+      const t = now();
+      const times = String(req.query.slots || '').split(/[,;\s]+/).filter(Boolean);
+      const nowHm = jstHm(t);
+      const bad = times.filter((x) => !/^([01]\d|2[0-3]):[0-5]\d$/.test(x) || x <= nowHm);
+      if (!times.length || bad.length) return res.status(400).json({ ok: false, error: `時刻は HH:MM で今（${nowHm}）より後: ${bad.join(',') || '空'}` });
+      const day = await storeFor(req.query.account === 'cafe' ? 'cafe' : 'hobby').addSlots(jstDateKey(t), times);
+      if (!day) return res.status(404).json({ ok: false, error: '今日の枠がまだ無い（見回りが一度動いてから）' });
+      res.json({ ok: true, slots: day.slots });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   app.get('/admin/status', async (req, res) => {
     if (!gate(req, res)) return;
     try {

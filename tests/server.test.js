@@ -216,3 +216,20 @@ describe('セルフカフェ公式アカウント（account=cafe）', () => {
     await request(app).get('/cron/tick?key=k').expect(500);
   });
 });
+
+// 2026-10-29 社長「今日から5本にして」: その日の枠を足す
+describe('/admin/add-slots', () => {
+  test('今日の枠に時刻を足す（過ぎた時刻・形の違う値は断る）', async () => {
+    const { createApp } = require('../src/server');
+    const { memoryStore } = require('../src/store');
+    const store = memoryStore({ now: () => new Date('2026-10-29T06:40:00Z'), prefix: 'threads_cafe_' });
+    await store.ensureDay('2026-10-29', () => ({ slots: ['13:21', '19:13'] }));
+    const app = createApp({ env: { CRON_KEY: 'k' }, cafeStore: store, now: () => new Date('2026-10-29T06:40:00Z') });
+    const request = require('supertest');
+    const r = await request(app).get('/admin/add-slots?account=cafe&slots=16:58,18:07,20:31').set('X-Cron-Key', 'k');
+    expect(r.status).toBe(200);
+    expect((await store.getDay('2026-10-29')).slots).toEqual(['13:21', '19:13', '16:58', '18:07', '20:31']);
+    const bad = await request(app).get('/admin/add-slots?account=cafe&slots=15:00').set('X-Cron-Key', 'k');
+    expect(bad.status).toBe(400);
+  });
+});

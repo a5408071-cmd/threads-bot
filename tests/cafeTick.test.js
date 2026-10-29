@@ -70,7 +70,7 @@ test('写真は最近使った店を避ける', async () => {
   expect(d.site.pickPhoto).toHaveBeenCalledWith({ recentUrls: ['https://selfcafe.jp/shop/aichi/akatsuka/'] });
 });
 
-test('新店舗・キャンペーンの記事があれば、その回は記事の事実で店名入りの告知。告知した記事は二度と出さず、1 日 1 本まで', async () => {
+test('新店舗・キャンペーンの記事があれば、その回は記事の事実で店名入りの告知', async () => {
   const d = deps({ news: [NEWS_ITEM] });
   await d.store.setToken(TOKEN);
   await runCafeTick(d);
@@ -78,16 +78,52 @@ test('新店舗・キャンペーンの記事があれば、その回は記事�
   expect(call.type).toBe('newstore');
   expect(call.facts).toMatch(/イオンタウン大垣/);
   expect(call.facts).toMatch(/10:30～22:00/);
+  expect(call.facts).toMatch(/1 回目（全 3 回）/);
   expect(d.notify.owner.mock.calls[0][0]).toMatch(/セルフカフェイオンタウン大垣店/);
-  // 同じ日の 2 本目（夕方）はふだんの回
-  const d2 = deps({ store: d.store, news: [NEWS_ITEM, { ...NEWS_ITEM, url: 'https://selfcafe.jp/campaign/2/', category: 'キャンペーン' }], now: at('18:45') });
-  await runCafeTick(d2);
-  expect(d2.site.announcement).not.toHaveBeenCalled();
-  expect(d2.writer.writePost.mock.calls[0][0].type).not.toBe('newstore');
-  // 翌日は告知済みの記事を飛ばして次の記事
-  const d3 = deps({ store: d.store, news: [NEWS_ITEM, { ...NEWS_ITEM, url: 'https://selfcafe.jp/campaign/2/', category: 'キャンペーン' }], now: at('11:20', '2026-10-30') });
-  await runCafeTick(d3);
-  expect(d3.site.announcement).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://selfcafe.jp/campaign/2/' }));
+});
+
+// 2026-10-29 社長「新店舗の情報は3日は続けて 文章は都度変更で」
+test('同じ記事は 3 日続けて告知（1 日 1 回）。2 回目以降は前の告知文を渡して書き方を変えさせ、4 日目は出さない', async () => {
+  const store = memoryStore({ now: () => at('11:20'), prefix: 'threads_cafe_' });
+  await store.setToken(TOKEN);
+  const days = ['2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01'];
+  const types = [];
+  for (const [i, day] of days.entries()) {
+    const d = deps({ store, news: [NEWS_ITEM], now: at('11:20', day) });
+    d.writer.writePost = jest.fn(async (o) => ({ ok: true, text: `告知文その${i + 1}。藤が丘`, type: o.type, attempts: 1, tag: 'セルフカフェ' }));
+    d.threads.publishPost = jest.fn(async () => ({ ok: true, mediaId: `m${i}`, permalink: 'p' }));
+    await runCafeTick(d);
+    const call = d.writer.writePost.mock.calls[0][0];
+    types.push(call.type);
+    if (i === 1) {
+      expect(call.facts).toMatch(/2 回目（全 3 回）/);
+      expect(call.facts).toMatch(/告知文その1/);
+      expect(call.recent).toContain('告知文その1。藤が丘');
+    }
+    // 同じ日の 2 本目は同じ記事を出さない
+    const again = deps({ store, news: [NEWS_ITEM], now: at('18:45', day) });
+    await runCafeTick(again);
+    expect(again.writer.writePost.mock.calls[0][0].type).not.toBe('newstore');
+  }
+  expect(types.slice(0, 3)).toEqual(['newstore', 'newstore', 'newstore']);
+  expect(types[3]).not.toBe('newstore');
+});
+
+test('告知は 1 日 2 本まで（別々の記事）。続きの記事（2〜3 日目）を新しい記事より先に出す', async () => {
+  const B = { ...NEWS_ITEM, url: 'https://selfcafe.jp/newstore/2/' };
+  const C = { ...NEWS_ITEM, url: 'https://selfcafe.jp/newstore/3/' };
+  const store = memoryStore({ now: () => at('11:20'), prefix: 'threads_cafe_' });
+  await store.setToken(TOKEN);
+  await store.setConfig('announced', { urls: { [C.url]: ['2026-10-28'] } });
+  const urls = [];
+  for (const hm of ['11:20', '18:45', '18:46']) {
+    const d = deps({ store, news: [NEWS_ITEM, B, C], now: at(hm) });
+    d.draw = () => ({ slots: ['11:17', '18:41', '18:42'] });
+    d.site.announcement = jest.fn(async (item) => ({ ...ANNOUNCE, item }));
+    await runCafeTick(d);
+    if (d.site.announcement.mock.calls[0]) urls.push(d.site.announcement.mock.calls[0][0].url);
+  }
+  expect(urls).toEqual([C.url, NEWS_ITEM.url]);
 });
 
 test('告知の投稿に失敗したら告知済みにしない（次の回にもう一度）', async () => {

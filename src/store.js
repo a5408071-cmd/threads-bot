@@ -39,6 +39,19 @@ function createStore(db, { now = () => new Date(), prefix = 'threads_' } = {}) {
     });
   }
 
+  /** その日の枠の後ろに時刻を足す（並びの番号＝index を変えないよう末尾に足す。2026-10-29 社長「今日から5本にして」） */
+  async function addSlots(dateKey, times) {
+    const ref = col(C.days).doc(dateKey);
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return null;
+      const d = snap.data();
+      const slots = [...d.slots, ...times.filter((t) => !d.slots.includes(t))];
+      tx.update(ref, { slots });
+      return { ...d, slots };
+    });
+  }
+
   async function claimSlot(dateKey, index) {
     const ref = col(C.days).doc(dateKey);
     return db.runTransaction(async (tx) => {
@@ -175,7 +188,7 @@ function createStore(db, { now = () => new Date(), prefix = 'threads_' } = {}) {
     });
   }
 
-  return { getDay, ensureDay, claimSlot, releaseSlot, markPosted, markSkipped, savePost, recentPosts, getToken, setToken, getConfig, setConfig, seenReply, markReplySeen, alertDue, setOauthState, takeOauthState, photoUsedRecently, markPhotoUsed, photoLastUsed, updatePost, setMetric, getMetric, listMetrics };
+  return { getDay, ensureDay, addSlots, claimSlot, releaseSlot, markPosted, markSkipped, savePost, recentPosts, getToken, setToken, getConfig, setConfig, seenReply, markReplySeen, alertDue, setOauthState, takeOauthState, photoUsedRecently, markPhotoUsed, photoLastUsed, updatePost, setMetric, getMetric, listMetrics };
 }
 
 /** Firestore の使う部分だけを Map で真似る（テスト用）。createStore に渡すので本番と同じ経路を通る */

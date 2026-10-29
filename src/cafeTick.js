@@ -21,6 +21,8 @@ const RECENT_POSTS = 14;
 const LABEL = '【公式】';
 const CAFE_BANNED = ['鈴木大基', 'ウッドデザインパーク', 'wooddesignpark', 'wood-designpark'];
 const TOKEN_ALERT_HOURS = 12;
+const ANNOUNCE_DAYS = 3; // 同じ記事を何日続けて告知するか（CAFE_ANNOUNCE_DAYS で上書き）
+const ANNOUNCE_PER_DAY = 2; // 1 日に告知する本数の上限（5 本のうち。CAFE_ANNOUNCE_PER_DAY）
 // ふだんの回で店名・駅名を書いたら書き直し（写真の看板から拾うことがあるため。プロンプトだけに頼らない）
 const STORE_NAME_RE = /セルフカフェ\s*[^\s、。！？!?「」]{1,12}店/;
 const STATION_RE = /「[^」]+」駅|[一-龥ァ-ヶ][一-龥ぁ-んァ-ヶー]{0,7}駅/g; // 藤が丘駅・南柏駅・「栄」駅
@@ -77,16 +79,35 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   out.due = due;
 
   // 店名を出すのは公式サイトの新着（新店舗・キャンペーン）を告知する回だけ。1 日 1 本まで、同じ記事は 1 回（2026-10-29 社長）
+  // 2026-10-29 社長「新店舗の情報は3日は続けて 文章は都度変更で」: 同じ記事を 1 日 1 回・ANNOUNCE_DAYS 日、告知は 1 日 ANNOUNCE_PER_DAY 本まで
+  const announceDays = Number(env.CAFE_ANNOUNCE_DAYS) || ANNOUNCE_DAYS;
+  const perDay = Number(env.CAFE_ANNOUNCE_PER_DAY) || ANNOUNCE_PER_DAY;
+  const readAnnounced = async () => {
+    const urls = ((await store.getConfig('announced')) || {}).urls || {};
+    const out = {};
+    for (const [u, v] of Object.entries(urls)) out[u] = typeof v === 'string' ? { days: [v], texts: [] } : Array.isArray(v) ? { days: v, texts: [] } : { days: v.days || [], texts: v.texts || [] }; // 旧形式（日付 1 つ・日付の並び）も読む
+    return out;
+  };
   const pickAnnouncement = async ({ force = false } = {}) => {
     if (env.CAFE_ANNOUNCE === 'false') return null;
-    const done = ((await store.getConfig('announced')) || {}).urls || {};
-    if (!force && Object.values(done).includes(dateKey)) return null;
-    const items = (await site.pendingAnnouncements(dateKey)).filter((i) => !done[i.url]);
-    return items.length ? site.announcement(items[0]) : null;
+    const done = await readAnnounced();
+    const today = Object.values(done).filter((v) => v.days.includes(dateKey)).length;
+    if (!force && today >= perDay) return null;
+    const rec = (u) => done[u] || { days: [], texts: [] };
+    const items = (await site.pendingAnnouncements(dateKey))
+      .filter((i) => rec(i.url).days.length < announceDays && (force || !rec(i.url).days.includes(dateKey)))
+      .map((i, k) => ({ i, k, started: rec(i.url).days.length > 0 }))
+      .sort((x, y) => (Number(y.started) - Number(x.started)) || (x.k - y.k)) // 続き（2〜3 日目）を先に
+      .map((x) => x.i);
+    if (!items.length) return null;
+    const a = await site.announcement(items[0]);
+    return a && { ...a, round: rec(items[0].url).days.length + 1, previous: rec(items[0].url).texts };
   };
-  const markAnnounced = async (url) => {
-    const cur = ((await store.getConfig('announced')) || {}).urls || {};
-    await store.setConfig('announced', { urls: { ...cur, [url]: dateKey } });
+  const markAnnounced = async (url, text) => {
+    const cur = await readAnnounced();
+    const r = cur[url] || { days: [], texts: [] };
+    cur[url] = { days: [...r.days, dateKey], texts: [...r.texts, text].slice(-announceDays) };
+    await store.setConfig('announced', { urls: cur });
   };
 
   const compose = async () => {
@@ -104,8 +125,10 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
         `- 見出し: ${a.item.title}`,
         `- 記事の日付: ${a.item.date}`,
         `- 本文:\n${a.text}`,
+        `この記事の告知は ${a.round || 1} 回目（全 ${announceDays} 回）。${(a.previous || []).length ? '前回までの告知文と、書き出し・切り口・取り上げる事実の順番・使い方の例・締めを変える（同じ文・同じ言い回しは使わない）:' : '1 回目なので、何がいつどこで始まるかを分かりやすく。'}`,
+        ...(a.previous || []).map((p, k) => `  前回${k + 1}: ${String(p).replace(/\n/g, ' ')}`),
       ].join('\n');
-      const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts, banned: CAFE_BANNED });
+      const w = await writer.writePost({ type, recent: [...(a.previous || []), ...recent.map((p) => p.text)], dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts, banned: CAFE_BANNED });
       return { ...w, photo: a.photo, storeUrl: a.shopUrl, storeName: a.storeName, announceUrl: a.item.url };
     }
     const type = forceType || pickCafeType(recent.map((p) => p.type));
@@ -117,7 +140,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   const publish = async (w) => threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}) });
   const record = async (w, r, extra = {}) => {
     // 公開できたら先に告知済みにする（後の保存で落ちても同じ記事を二度出さない）
-    if (w.announceUrl) { try { await markAnnounced(w.announceUrl); } catch (e) { fail(`告知済みの記録に失敗: ${e.message}`); } }
+    if (w.announceUrl) { try { await markAnnounced(w.announceUrl, w.text); } catch (e) { fail(`告知済みの記録に失敗: ${e.message}`); } }
     await store.savePost({ mediaId: r.mediaId, text: w.text, type: w.type, source: 'auto', permalink: r.permalink, postedAt: t.toISOString(), storeUrl: w.storeUrl, storeName: w.storeName, ...(w.tag ? { tag: w.tag } : {}), ...(w.photo ? { photoId: w.photo.id, photoName: w.photo.name } : {}), ...extra });
     out.posted.push({ mediaId: r.mediaId, permalink: r.permalink, type: w.type, store: w.storeName || '全店', ...(w.tag ? { tag: w.tag } : {}), ...extra });
     if (env.THREADS_COPY_TO_OWNER === 'true' || extra.manual) {
