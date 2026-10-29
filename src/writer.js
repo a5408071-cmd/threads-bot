@@ -7,7 +7,7 @@ const persona = require('./persona');
 const TYPES = ['question', 'aruaru', 'invite', 'season', 'small', 'hook', 'work', 'fitness', 'daily', 'news', 'countdown', 'koyomi', 'tips'];
 const NON_GOLF = ['work', 'fitness', 'daily', 'news']; // ゴルフ以外（2026-10-28 社長「ゴルフ以外も」「経営者らしく」「マラソン・ジム」）。重みを 2 倍にして半分くらい
 // ウェブ検索で事実を確かめてから書く型（2026-10-29 社長「試験の残り何日」「暦」「継続のコツ へえーってなる」を追加）
-const SEARCH_TYPES = ['news', 'countdown', 'koyomi', 'tips'];
+const SEARCH_TYPES = ['news', 'countdown', 'koyomi', 'tips', 'quote']; // quote（偉人の名言）は公式アカウントだけの型
 const COUNTDOWN_MAX_DAYS = 400;
 const WEB_SEARCH_TOOL = { type: 'web_search_20260209', name: 'web_search', max_uses: 3 };
 const MAX_CONTINUES = 3; // pause_turn（検索の続き）の上限
@@ -156,8 +156,9 @@ function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto =
     `型: ${type} … ${P.TYPE_GUIDE[type] || ''}`,
   ];
   if (type === 'news') lines.push('まずウェブ検索で今日・今週の明るい話題（スポーツ・季節の行事・グルメ・流行）を確かめてから書く。政治・事件・事故・災害・訃報・不祥事は選ばない。');
-  if (type === 'countdown') lines.push('まずウェブ検索で、今日から見て近づいている試験・行事（日商簿記・宅建・行政書士・FP・中小企業診断士・社労士・大学入学共通テスト・年末年始・ホノルルマラソン など）と、いま話題になっているものを確かめ、1 つ選んで正式な日付を確かめる。直近の投稿と同じ試験・行事は避ける。残り日数を書くときは数字を書かずに {N} と書き（例: 共通テストまで残り{N}日）、タグの行の前に「日付: YYYY-MM-DD」（その試験・行事の当日）を 1 行書く。日数は投稿側で計算して入れる。日付が確かめられなければ日数は書かない。');
+  if (type === 'countdown') lines.push('まずウェブ検索で、今日から見て近づいている試験・行事（日商簿記・宅建・行政書士・FP・中小企業診断士・社労士・大学入学共通テスト・年末年始 など）と、いま話題になっているものを確かめ、1 つ選んで正式な日付を確かめる。直近の投稿と同じ試験・行事は避ける。残り日数を書くときは数字を書かずに {N} と書き（例: 共通テストまで残り{N}日）、タグの行の前に「日付: YYYY-MM-DD」（その試験・行事の当日）を 1 行書く。日数は投稿側で計算して入れる。日付が確かめられなければ日数は書かない。');
   if (type === 'koyomi') lines.push('まずウェブ検索で、今日・今週の暦（二十四節気・七十二候・雑節・旧暦の月の名前・記念日・年中行事）を確かめ、1 つ選んで由来や意味の「へえー」となる話を短く添える。日付と名前は検索で確かめたものだけ書く。');
+  if (type === 'quote') lines.push('まずウェブ検索で、名言が本当にその人の言葉か（出典）を確かめる。確かめられない・諸説ある言葉は使わず別の名言にする。直近の投稿と同じ人・同じ言葉は避ける。');
   if (type === 'tips') lines.push('必要ならウェブ検索で確かめる。研究や本の話を出すときは、よく知られていて検索で確かめられたものだけにし、細かい数字や人名に自信が無ければぼかす（「〜という研究があるらしい」）。');
   if (recent && recent.length) {
     lines.push('直近の投稿（言い回し・話題・書き出しを変える。同じ文は書かない）:');

@@ -96,3 +96,24 @@ test('鍵が無くても dry なら文を作って見せる（接続前の確認
   const r = await runCafeTick(d);
   expect(r.preview).toMatchObject({ store: 'セルフカフェ 藤が丘店' });
 });
+
+describe('公式にも試験・暦・継続のコツ・名言（2026-10-29 社長「これセルフカフェの公式の方もね 偉人の名言もセルフはいれていこう」）', () => {
+  const personaCafe = require('../src/personaCafe');
+  const { SEARCH_TYPES } = require('../src/writer');
+  test('型に countdown・koyomi・tips・quote があり、どれも検索で確かめる', () => {
+    expect(personaCafe.TYPES).toEqual(expect.arrayContaining(['countdown', 'koyomi', 'tips', 'quote']));
+    for (const t of ['countdown', 'koyomi', 'tips', 'quote']) {
+      expect(personaCafe.TYPE_GUIDE[t]).toBeTruthy();
+      expect(SEARCH_TYPES).toContain(t);
+    }
+    expect(personaCafe.SYSTEM).toMatch(/名言/);
+  });
+  test('pickCafeType で新しい型も出る', () => {
+    const seen = new Set();
+    for (let i = 0; i < 500; i++) seen.add(pickCafeType([]));
+    for (const t of ['countdown', 'koyomi', 'tips', 'quote']) expect(seen).toContain(t);
+  });
+  test('名言は趣味用には入れない', () => {
+    expect(require('../src/writer').TYPES).not.toContain('quote');
+  });
+});
