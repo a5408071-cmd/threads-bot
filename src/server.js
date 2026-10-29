@@ -100,13 +100,13 @@ function createApp(deps = {}) {
     if (env.THREADS_ENABLED === 'false') return res.json({ ok: true, disabled: true, mode }); // 緊急停止。Firestore にもつながない
     try {
       if (req.query.account === 'cafe') {
-        const rc = await runCafe(mode, { forcePost: mode === 'live' && req.query.post === '1', forceType: mode !== 'live' && req.query.type ? String(req.query.type) : null });
+        const rc = await runCafe(mode, { forcePost: mode === 'live' && req.query.post === '1', forceType: (mode !== 'live' || req.query.post === '1') && req.query.type ? String(req.query.type) : null });
         const ec = (rc && rc.errors) || [];
         if (ec.length) console.error(`[threads] CAFE_TICK_ERRORS ${ec.join(' | ')}`);
         return res.status(ec.length ? 500 : 200).json(rc);
       }
       const tick = deps.tick || require('./tick');
-      const r = await tick.runTick({ env, store: getStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: getNotify(), anthropic: getAnthropic(), now, mode, replies: getReplies(), photos: getPhotos(), stock: getStock(), growth: getGrowth(), forcePhoto: req.query.photo === '1', forcePost: mode === 'live' && req.query.post === '1', forceType: mode !== 'live' && req.query.type ? String(req.query.type) : null });
+      const r = await tick.runTick({ env, store: getStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: getNotify(), anthropic: getAnthropic(), now, mode, replies: getReplies(), photos: getPhotos(), stock: getStock(), growth: getGrowth(), forcePhoto: req.query.photo === '1', forcePost: mode === 'live' && req.query.post === '1', forceType: (mode !== 'live' || req.query.post === '1') && req.query.type ? String(req.query.type) : null });
       // 趣味用のあとに公式も回す（公式が落ちても趣味用の結果は返す）
       if (mode === 'live' && !(req.query.post === '1')) {
         try { r.cafe = await runCafe('live'); } catch (e) { r.cafe = { ok: false, errors: [`【公式】${e.message}`] }; }

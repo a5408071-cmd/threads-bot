@@ -258,3 +258,10 @@ describe('メディア掲載の紹介（2026-10-29 社長）', () => {
     expect(d2.site.announcement).not.toHaveBeenCalled();
   });
 });
+
+test('型を指定した告知（type=media）は、その種類の記事だけから選ぶ（新店舗の記事が先にあっても）', async () => {
+  const MEDIA_ITEM = { url: 'https://selfcafe.jp/media-information/202610213449/', date: '2026-10-21', category: 'メディア掲載', title: '【メディア情報】東洋経済オンラインに掲載されました。', tags: [] };
+  const d = deps({ news: [NEWS_ITEM, MEDIA_ITEM], mode: 'dry' });
+  await runCafeTick({ ...d, forceType: 'media' });
+  expect(d.site.announcement).toHaveBeenCalledWith(MEDIA_ITEM);
+});

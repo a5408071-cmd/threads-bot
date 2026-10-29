@@ -96,7 +96,8 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     for (const [u, v] of Object.entries(urls)) out[u] = !v ? { days: [], texts: [] } : typeof v === 'string' ? { days: [v], texts: [] } : Array.isArray(v) ? { days: v, texts: [] } : { days: v.days || [], texts: v.texts || [] }; // 旧形式（日付 1 つ・日付の並び）も読む
     return out;
   };
-  const pickAnnouncement = async ({ force = false } = {}) => {
+  const kindOf = (i) => (i.category === 'メディア掲載' ? 'media' : i.category === 'キャンペーン' ? 'campaign' : 'newstore');
+  const pickAnnouncement = async ({ force = false, kind = null } = {}) => {
     if (env.CAFE_ANNOUNCE === 'false') return null;
     const done = await readAnnounced();
     const today = Object.values(done).filter((v) => v.days.includes(dateKey)).length;
@@ -104,6 +105,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     const rec = (u) => done[u] || { days: [], texts: [] };
     const daysFor = (i) => (i.category === 'メディア掲載' ? 1 : announceDays); // メディア掲載の紹介は 1 回だけ
     const items = (await site.pendingAnnouncements(dateKey))
+      .filter((i) => !kind || kindOf(i) === kind) // 型を指定したら（type=media など）その種類の記事だけ
       .filter((i) => rec(i.url).days.length < daysFor(i) && (force || !rec(i.url).days.includes(dateKey)))
       .map((i, k) => ({ i, k, started: rec(i.url).days.length > 0 }))
       .sort((x, y) => (Number(y.started) - Number(x.started)) || (x.k - y.k)) // 続き（2〜3 日目）を先に
@@ -124,7 +126,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     const wantAnnounce = !forceType || personaCafe.ANNOUNCE_TYPES.includes(forceType);
     let a = null;
     if (wantAnnounce) {
-      try { a = await pickAnnouncement({ force: Boolean(forceType) }); } catch (e) { console.warn(`[threads] CAFE_ANNOUNCE_FAILED ${e.message}`); }
+      try { a = await pickAnnouncement({ force: Boolean(forceType), kind: forceType && personaCafe.ANNOUNCE_TYPES.includes(forceType) ? forceType : null }); } catch (e) { console.warn(`[threads] CAFE_ANNOUNCE_FAILED ${e.message}`); }
     }
     if (forceType && personaCafe.ANNOUNCE_TYPES.includes(forceType) && !a) return { ok: false, reason: '告知できる新店舗・キャンペーン・メディア掲載の記事が無い', type: forceType };
     if (a) {
