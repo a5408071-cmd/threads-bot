@@ -230,3 +230,11 @@ test('名言の回は、これまで使った名言を渡し、投稿できた�
   expect(r.errors).toEqual([]);
   expect((await d.store.getConfig('quotes')).used).toEqual(['「千里の行も足下に始まる」（老子）', '「之を知る者は之を好む者に如かず」。孔子の『論語』の言葉です']);
 });
+
+// 2026-10-29 社長「名言急に言い出すと変なので 今日は○○の編みたいな感じで始めようか」
+test('名言の回は「今日の名言は〇〇編」で始まらなければ書き直し', () => {
+  const { quoteCheck } = require('../src/cafeTick');
+  expect(quoteCheck('今日の名言は、イチロー選手編です。\n「小さいことを…」').ok).toBe(true);
+  expect(quoteCheck('「小さいことを…」。イチロー選手の言葉です').ok).toBe(false);
+  expect(quoteCheck('今日の名言は、イチロー選手編です。\nセルフカフェ栄店で').ok).toBe(false); // 店名の検査も続けて掛かる
+});

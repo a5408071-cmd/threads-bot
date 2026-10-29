@@ -29,6 +29,12 @@ const ANNOUNCE_PER_DAY = 2; // 1 日に告知する本数の上限（5 本のう
 const STORE_NAME_RE = /セルフカフェ\s*[^\s、。！？!?「」]{1,12}店/;
 const STATION_RE = /「[^」]+」駅|[一-龥ァ-ヶ][一-龥ぁ-んァ-ヶー]{0,7}駅/g; // 藤が丘駅・南柏駅・「栄」駅
 const GENERIC_STATION_RE = /(最寄り?|主要|ターミナル|各|近く|大きな|乗換|乗り換え)駅$|[のはをにでとやも]/; // 一般語と、助詞をまたいだ取りすぎは除く
+// 名言の回は「今日の名言は〇〇編」で始める（2026-10-29 社長「名言急に言い出すと変なので 今日は○○の編みたいな感じで始めようか」）
+function quoteCheck(text) {
+  if (!/^.{0,3}今日の名言は.{1,30}編/.test(String(text || '').trim())) return { ok: false, reason: '名言の回は 1 行目を「今日の名言は、〇〇（人の名前）編です。」で始める' };
+  return noStoreCheck(text);
+}
+
 function noStoreCheck(text) {
   const s = String(text || '');
   const m = s.match(STORE_NAME_RE) || [...s.matchAll(STATION_RE)].find((x) => x[0].startsWith('「') || !GENERIC_STATION_RE.test(x[0]));
@@ -141,7 +147,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
       const used = ((await store.getConfig('quotes')) || {}).used || [];
       facts += `\n名言は日本・海外の偉人、経営者・科学者・発明家・作家・スポーツ選手など幅広く選ぶ（孔子・老子のような定番ばかりにしない）。${used.length ? `\nこれまでに使った名言（同じ言葉は使わない。同じ人も直近 10 個に入っていれば避ける）:\n${used.slice(-QUOTES_IN_PROMPT).map((q) => `- ${q}`).join('\n')}` : ''}`;
     }
-    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts, banned: CAFE_BANNED, check: noStoreCheck });
+    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts, banned: CAFE_BANNED, check: type === 'quote' ? quoteCheck : noStoreCheck });
     return { ...w, photo: picked.photo, storeUrl: picked.url, storeName: null };
   };
 
@@ -220,4 +226,4 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   return out;
 }
 
-module.exports = { runCafeTick, pickCafeType, noStoreCheck, CAFE_WINDOWS, LABEL, CAFE_BANNED };
+module.exports = { runCafeTick, pickCafeType, noStoreCheck, quoteCheck, CAFE_WINDOWS, LABEL, CAFE_BANNED };
