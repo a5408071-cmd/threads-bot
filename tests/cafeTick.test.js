@@ -232,9 +232,10 @@ test('名言の回は、これまで使った名言を渡し、投稿できた�
 });
 
 // 2026-10-29 社長「名言急に言い出すと変なので 今日は○○の編みたいな感じで始めようか」
-test('名言の回は「今日の名言は〇〇編」で始まらなければ書き直し', () => {
+test('名言の回は「今日は名言編」で始まらなければ書き直し（社長「じゃなくて名言編ってこと」）', () => {
   const { quoteCheck } = require('../src/cafeTick');
-  expect(quoteCheck('今日の名言は、イチロー選手編です。\n「小さいことを…」').ok).toBe(true);
+  expect(quoteCheck('今日は名言編です📖\n「小さいことを…」').ok).toBe(true);
+  expect(quoteCheck('今日の名言は、イチロー選手編です。\n「小さいことを…」').ok).toBe(false);
   expect(quoteCheck('「小さいことを…」。イチロー選手の言葉です').ok).toBe(false);
-  expect(quoteCheck('今日の名言は、イチロー選手編です。\nセルフカフェ栄店で').ok).toBe(false); // 店名の検査も続けて掛かる
+  expect(quoteCheck('今日は名言編です。\nセルフカフェ栄店で').ok).toBe(false); // 店名の検査も続けて掛かる
 });
