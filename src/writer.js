@@ -4,8 +4,11 @@
  */
 const persona = require('./persona');
 
-const TYPES = ['question', 'aruaru', 'invite', 'season', 'small', 'hook', 'work', 'fitness', 'daily', 'news'];
+const TYPES = ['question', 'aruaru', 'invite', 'season', 'small', 'hook', 'work', 'fitness', 'daily', 'news', 'countdown', 'koyomi', 'tips'];
 const NON_GOLF = ['work', 'fitness', 'daily', 'news']; // ゴルフ以外（2026-10-28 社長「ゴルフ以外も」「経営者らしく」「マラソン・ジム」）。重みを 2 倍にして半分くらい
+// ウェブ検索で事実を確かめてから書く型（2026-10-29 社長「試験の残り何日」「暦」「継続のコツ へえーってなる」を追加）
+const SEARCH_TYPES = ['news', 'countdown', 'koyomi', 'tips'];
+const COUNTDOWN_MAX_DAYS = 400;
 const WEB_SEARCH_TOOL = { type: 'web_search_20260209', name: 'web_search', max_uses: 3 };
 const MAX_CONTINUES = 3; // pause_turn（検索の続き）の上限
 const TAG_MAX = 50;
@@ -55,10 +58,14 @@ function pickType(recentTypes = [], date = new Date(), rng = Math.random, weight
 
 /** 本文の最後の「タグ: 〇〇」を切り出す。# . & は落とす。無ければ型の既定 */
 function splitTag(text, type, P = persona) {
-  const lines = String(text || '').split('\n');
-  let tag = null; let photoQuery = null;
+  const lines = String(text || '').split('\n').filter((l, i, a) => l.trim() || a.slice(i).some((x) => x.trim())); // 末尾の空行は窓に数えない
+  let tag = null; let photoQuery = null; let targetDate = null;
   // 末尾 4 行のうち「タグ: 〇〇」「写真: <検索語>」を取り出す（どちらも 1 行ずつ）
-  for (let i = lines.length - 1; i >= 0 && i >= lines.length - 4; i--) {
+  for (let i = lines.length - 1, seen = 0; i >= 0 && seen < 5; i--) {
+    if (!lines[i].trim()) continue; // 空行は窓に数えない
+    seen++;
+    const d = lines[i].match(/^\s*(?:日付|date)\s*[:：]\s*(\d{4}-\d{2}-\d{2})\s*$/i);
+    if (d && targetDate == null) { targetDate = d[1]; lines.splice(i, 1); continue; }
     const m = lines[i].match(/^\s*(?:タグ|tag|topic)\s*[:：]\s*(.+?)\s*$/i);
     if (m && tag == null) { tag = m[1]; lines.splice(i, 1); continue; }
     const p = lines[i].match(/^\s*(?:写真|photo|image)\s*[:：]\s*(.+?)\s*$/i);
@@ -66,7 +73,28 @@ function splitTag(text, type, P = persona) {
   }
   const body = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   const clean = tag ? tag.replace(/[#＃.&\s]/g, '').slice(0, TAG_MAX) : '';
-  return { body, tag: clean || (P.DEFAULT_TAG || {})[type] || (P.FALLBACK_TAG || 'ゴルフ'), photoQuery };
+  return { body, tag: clean || (P.DEFAULT_TAG || {})[type] || (P.FALLBACK_TAG || 'ゴルフ'), photoQuery, targetDate };
+}
+
+/**
+ * 残り日数は AI に数えさせない: 本文の {N} を「日付:」の日までの日数（dateKey＝JST の今日から）に置き換える。
+ * 数字で「残り80日」と書いた・{N} なのに日付が無い／過去・遠すぎる は書き直し。
+ */
+const N_RE = /[{｛]\s*[NＮnｎ]\s*[}｝]/g;
+const BRACE_RE = /[{｛][^}｝]*[}｝]/;
+function fillCountdown(body, targetDate, dateKey, type = 'countdown') {
+  // 数字で数えた残り日数は countdown 型だけ止める（他の型の「週末まであと2日」は通す）
+  if (type === 'countdown' && /(残り|あと)\s*[0-9０-９〇一二三四五六七八九十百]+\s*(日|週|か月|ヶ月|カ月|ヵ月)/.test(body)) return { ok: false, reason: '残り日数を数字で書いている（数字は書かずに {N} と書き、タグの前に「日付: YYYY-MM-DD」を 1 行）' };
+  let text = body;
+  if (body.search(N_RE) >= 0) {
+    if (!targetDate) return { ok: false, reason: '{N} があるのに「日付: YYYY-MM-DD」の行が無い' };
+    const days = Math.round((Date.parse(`${targetDate}T00:00:00Z`) - Date.parse(`${dateKey}T00:00:00Z`)) / 86400000);
+    if (!(days >= 1 && days <= COUNTDOWN_MAX_DAYS)) return { ok: false, reason: `「日付: ${targetDate}」が今日（${dateKey}）より後の ${COUNTDOWN_MAX_DAYS} 日以内ではない` };
+    text = body.replace(N_RE, String(days));
+  }
+  // {N日} などの崩れた置き場所が残ったまま公開しない（全部の型）
+  if (BRACE_RE.test(text)) return { ok: false, reason: '本文に { } が残っている（残り日数は {N} だけで書く）' };
+  return { ok: true, text };
 }
 
 function norm(s) { return String(s || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ''); } // 全角・半角の違い（ＷＤＰ・ｾﾙﾌ）も当てる
@@ -128,6 +156,9 @@ function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto =
     `型: ${type} … ${P.TYPE_GUIDE[type] || ''}`,
   ];
   if (type === 'news') lines.push('まずウェブ検索で今日・今週の明るい話題（スポーツ・季節の行事・グルメ・流行）を確かめてから書く。政治・事件・事故・災害・訃報・不祥事は選ばない。');
+  if (type === 'countdown') lines.push('まずウェブ検索で、今日から見て近づいている試験・行事（日商簿記・宅建・行政書士・FP・中小企業診断士・社労士・大学入学共通テスト・年末年始・ホノルルマラソン など）と、いま話題になっているものを確かめ、1 つ選んで正式な日付を確かめる。直近の投稿と同じ試験・行事は避ける。残り日数を書くときは数字を書かずに {N} と書き（例: 共通テストまで残り{N}日）、タグの行の前に「日付: YYYY-MM-DD」（その試験・行事の当日）を 1 行書く。日数は投稿側で計算して入れる。日付が確かめられなければ日数は書かない。');
+  if (type === 'koyomi') lines.push('まずウェブ検索で、今日・今週の暦（二十四節気・七十二候・雑節・旧暦の月の名前・記念日・年中行事）を確かめ、1 つ選んで由来や意味の「へえー」となる話を短く添える。日付と名前は検索で確かめたものだけ書く。');
+  if (type === 'tips') lines.push('必要ならウェブ検索で確かめる。研究や本の話を出すときは、よく知られていて検索で確かめられたものだけにし、細かい数字や人名に自信が無ければぼかす（「〜という研究があるらしい」）。');
   if (recent && recent.length) {
     lines.push('直近の投稿（言い回し・話題・書き出しを変える。同じ文は書かない）:');
     recent.forEach((r, i) => lines.push(`${i + 1}. ${String(r).replace(/\n/g, ' ')}`));
@@ -163,11 +194,11 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic, phot
   const model = env.THREADS_MODEL || DEFAULT_MODEL;
   const reasons = [];
   let lastReason = '';
-  const isNews = type === 'news';
+  const useSearch = SEARCH_TYPES.includes(type);
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const messages = [{ role: 'user', content: userContent({ type, recent, dateKey, reasons, photo, stockPhoto, P, facts }) }];
     const req = { model, max_tokens: MAX_TOKENS, output_config: { effort: 'medium' }, system: P.SYSTEM, messages };
-    if (isNews) req.tools = [WEB_SEARCH_TOOL]; // 時事は検索で確かめる（作り話を防ぐ）
+    if (useSearch) req.tools = [WEB_SEARCH_TOOL]; // 時事・試験日・暦・研究の話は検索で確かめる（作り話を防ぐ）
     let res = await anthropic.messages.create(req);
     // 検索の途中で止まった（pause_turn）ら、返ってきた content を assistant として足して続きを頼む
     for (let k = 0; k < MAX_CONTINUES && res.stop_reason === 'pause_turn'; k++) {
@@ -175,10 +206,11 @@ async function writePost({ type, recent = [], dateKey, env = {}, anthropic, phot
       res = await anthropic.messages.create({ ...req, messages });
     }
     const raw = (res.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
-    const { body, tag, photoQuery } = splitTag(cleanOutput(raw), type, P);
-    const text = body;
+    const { body, tag, photoQuery, targetDate } = splitTag(cleanOutput(raw), type, P);
+    const cd = fillCountdown(body, targetDate, dateKey, type);
+    const text = cd.ok ? cd.text : body;
     // 途中で切れた案（stop_reason=max_tokens）は空でなくても使わない
-    const c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : checkText(text, { banned, recent, minChars: photo ? MIN_CHARS : MIN_CHARS_TEXT_ONLY });
+    const c = res.stop_reason === 'max_tokens' ? { ok: false, reason: '本文が途中で切れた（max_tokens）。短く書き直す' } : (!cd.ok ? cd : checkText(text, { banned, recent, minChars: photo ? MIN_CHARS : MIN_CHARS_TEXT_ONLY }));
     if (c.ok) return { ok: true, text, type, attempts: attempt, tag, ...(stockPhoto && photoQuery ? { photoQuery } : {}) };
     lastReason = c.reason;
     reasons.push(c.reason);
@@ -211,4 +243,4 @@ async function photoFits({ text, bytes, mediaType = 'image/jpeg', env = {}, anth
   }
 }
 
-module.exports = { pickType, checkText, writePost, photoFits, similarity, parseBanned, TYPES, MAX_CHARS, MIN_CHARS, DEFAULT_MODEL, DEFAULT_BANNED, MAX_TOKENS, FIT_MODEL };
+module.exports = { pickType, checkText, writePost, photoFits, similarity, parseBanned, fillCountdown, TYPES, SEARCH_TYPES, MAX_CHARS, MIN_CHARS, DEFAULT_MODEL, DEFAULT_BANNED, MAX_TOKENS, FIT_MODEL };

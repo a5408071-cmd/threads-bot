@@ -61,3 +61,11 @@ test('weightsFor: 保存した配分が無ければ既定', async () => {
   await store.setConfig('strategy', { weights: { question: 9 } });
   expect((await growth.weightsFor()).question).toBe(9);
 });
+
+test('weekly: AI の答えに無い型（後から足した countdown など）は 0 にせず今の重みのまま', async () => {
+  const { growth, store } = mk();
+  await growth.weekly(TOKEN);
+  const { weights } = await store.getConfig('strategy');
+  expect(weights).toMatchObject({ countdown: DEFAULT_WEIGHTS.countdown, koyomi: DEFAULT_WEIGHTS.koyomi, tips: DEFAULT_WEIGHTS.tips });
+  expect(DEFAULT_WEIGHTS.countdown).toBeGreaterThan(0);
+});

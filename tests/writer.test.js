@@ -147,7 +147,7 @@ describe('ゴルフ以外の型とタグ（2026-10-28 社長「ゴルフ以外�
     expect(TYPES).toEqual(expect.arrayContaining(['daily', 'news']));
     let n = 0;
     for (let i = 0; i < 3000; i++) if (['daily', 'news'].includes(pickType([], new Date('2026-10-28T03:00:00Z'), Math.random))) n++;
-    expect(n).toBeGreaterThan(700); expect(n).toBeLessThan(1500);
+    expect(n).toBeGreaterThan(450); expect(n).toBeLessThan(1500);
   });
 
   test('本文の最後の「タグ: xxx」を切り出す。# と . と & は落とし、50 字まで', async () => {
@@ -274,4 +274,67 @@ test('pickType は weights（型ごとの重み）を渡せる。重み 0 の型
   const seen = new Set();
   for (let i = 0; i < 300; i++) seen.add(pickType([], new Date('2026-10-28T03:00:00Z'), Math.random, weights));
   expect([...seen].sort()).toEqual(['daily', 'fitness']);
+});
+
+describe('試験・暦・継続のコツ（2026-10-29 社長「簿記とか国家試験、センター試験などの話題も 残り何日とか 暦の話もいいね 継続することの難しさややる気を出すコツ へえーってなるといいね」）', () => {
+  test('型に countdown・koyomi・tips があり、どれもウェブ検索で確かめる', async () => {
+    expect(TYPES).toEqual(expect.arrayContaining(['countdown', 'koyomi', 'tips']));
+    for (const type of ['countdown', 'koyomi', 'tips']) {
+      const a = fakeAnthropic([`${LONG}\nタグ: 習慣化`]);
+      await writePost({ type, recent: [], dateKey: '2026-10-29', env: {}, anthropic: a });
+      expect(a.messages.create.mock.calls[0][0].tools).toEqual([expect.objectContaining({ type: 'web_search_20260209' })]);
+    }
+  });
+
+  test('{N} は「日付:」の行の日までの日数に置き換え、日付の行は本文から外す', async () => {
+    const a = fakeAnthropic([`${LONG}\n日商簿記の試験まで残り{N}日！\n日付: 2026-11-15\nタグ: 簿記`]);
+    const r = await writePost({ type: 'countdown', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a });
+    expect(r.ok).toBe(true);
+    expect(r.text).toContain('残り17日');
+    expect(r.text).not.toMatch(/\{N\}|日付:/);
+    expect(r.tag).toBe('簿記');
+  });
+
+  test('{N} があるのに日付が無い・過去の日付なら書き直し', async () => {
+    const a = fakeAnthropic([`${LONG}\n残り{N}日`, `${LONG}\n残り{N}日\n日付: 2026-10-01`, LONG]);
+    const r = await writePost({ type: 'countdown', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a });
+    expect(r).toMatchObject({ ok: true, attempts: 3 });
+    const third = JSON.stringify(a.messages.create.mock.calls[2][0].messages);
+    expect(third).toMatch(/日付/);
+  });
+
+  test('残り日数を数字で直接書いたら書き直し（数え間違いを防ぐ）', async () => {
+    const a = fakeAnthropic([`${LONG}\n共通テストまであと80日`, LONG]);
+    const r = await writePost({ type: 'countdown', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a });
+    expect(r).toMatchObject({ ok: true, attempts: 2 });
+  });
+
+  test('system に簿記・共通テスト・暦・継続のコツが入る', async () => {
+    const a = fakeAnthropic([LONG]);
+    await writePost({ type: 'tips', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a });
+    const sys = String(a.messages.create.mock.calls[0][0].system);
+    for (const w of ['簿記', '共通テスト', '二十四節気', '継続']) expect(sys).toContain(w);
+  });
+});
+
+describe('{N} の漏れを防ぐ（レビュー指摘）', () => {
+  const { fillCountdown } = require('../src/writer');
+  test('全角・小文字の {N} も置き換える。崩れた { } が残れば書き直し', () => {
+    expect(fillCountdown('残り｛Ｎ｝日と{n}日', '2026-11-15', '2026-10-29').text).toBe('残り17日と17日');
+    expect(fillCountdown('残り{N日}', '2026-11-15', '2026-10-29').ok).toBe(false);
+    expect(fillCountdown('なんでも{x}', null, '2026-10-29', 'daily').ok).toBe(false);
+  });
+  test('数字の残り日数を止めるのは countdown 型だけ。漢数字・か月も止める', () => {
+    expect(fillCountdown('週末まであと2日', null, '2026-10-29', 'daily').ok).toBe(true);
+    expect(fillCountdown('試験まで残り八十日', null, '2026-10-29', 'countdown').ok).toBe(false);
+    expect(fillCountdown('あと2か月', null, '2026-10-29', 'countdown').ok).toBe(false);
+  });
+  test('続けて呼んでも結果が変わらない', () => {
+    for (let i = 0; i < 3; i++) expect(fillCountdown('残り{N}日', '2026-11-15', '2026-10-29').text).toBe('残り17日');
+  });
+  test('日付とタグの間に空行があっても日付の行を本文から外す', async () => {
+    const a = fakeAnthropic([`${LONG}\n\n日付: 2026-11-15\n\nタグ: 簿記\n\n写真: study desk | notebook\n\n`]);
+    const r = await writePost({ type: 'daily', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a });
+    expect(r.text).toBe(LONG);
+  });
 });
