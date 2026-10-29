@@ -216,3 +216,17 @@ test('ふだんの回は writePost に店名の検査（check）を渡す。告�
   await runCafeTick(d2);
   expect(d2.writer.writePost.mock.calls[0][0].check).toBeFalsy();
 });
+
+// 2026-10-29 見本で同じ名言（孔子・老子）が続いた → 使った名言を覚えて二度と使わない
+test('名言の回は、これまで使った名言を渡し、投稿できたら「」の名言と人を覚える', async () => {
+  const d = deps();
+  await d.store.setToken(TOKEN);
+  await d.store.setConfig('quotes', { used: ['「千里の行も足下に始まる」（老子）'] });
+  d.writer.writePost = jest.fn(async (o) => ({ ok: true, text: '「之を知る者は之を好む者に如かず」。孔子の『論語』の言葉です。…', type: o.type, attempts: 1, tag: '名言' }));
+  const r = await runCafeTick({ ...d, forcePost: true, forceType: 'quote' });
+  const call = d.writer.writePost.mock.calls[0][0];
+  expect(call.facts).toMatch(/千里の行も足下に始まる/);
+  expect(call.facts).toMatch(/使わない/);
+  expect(r.errors).toEqual([]);
+  expect((await d.store.getConfig('quotes')).used).toEqual(['「千里の行も足下に始まる」（老子）', '「之を知る者は之を好む者に如かず」。孔子の『論語』の言葉です']);
+});

@@ -21,6 +21,8 @@ const RECENT_POSTS = 14;
 const LABEL = '【公式】';
 const CAFE_BANNED = ['鈴木大基', 'ウッドデザインパーク', 'wooddesignpark', 'wood-designpark'];
 const TOKEN_ALERT_HOURS = 12;
+const QUOTES_KEEP = 300; // 覚えておく名言の数
+const QUOTES_IN_PROMPT = 80; // AI に見せる数（新しい方から）
 const ANNOUNCE_DAYS = 3; // 同じ記事を何日続けて告知するか（CAFE_ANNOUNCE_DAYS で上書き）
 const ANNOUNCE_PER_DAY = 2; // 1 日に告知する本数の上限（5 本のうち。CAFE_ANNOUNCE_PER_DAY）
 // ふだんの回で店名・駅名を書いたら書き直し（写真の看板から拾うことがあるため。プロンプトだけに頼らない）
@@ -133,7 +135,13 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     }
     const type = forceType || pickCafeType(recent.map((p) => p.type));
     const picked = await site.pickPhoto({ recentUrls: recent.map((p) => p.storeUrl).filter(Boolean) });
-    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts: GENERAL_FACTS, banned: CAFE_BANNED, check: noStoreCheck });
+    let facts = GENERAL_FACTS;
+    if (type === 'quote') {
+      // 使った名言は二度と使わない（2026-10-29 見本で孔子・老子が続いた）
+      const used = ((await store.getConfig('quotes')) || {}).used || [];
+      facts += `\n名言は日本・海外の偉人、経営者・科学者・発明家・作家・スポーツ選手など幅広く選ぶ（孔子・老子のような定番ばかりにしない）。${used.length ? `\nこれまでに使った名言（同じ言葉は使わない。同じ人も直近 10 個に入っていれば避ける）:\n${used.slice(-QUOTES_IN_PROMPT).map((q) => `- ${q}`).join('\n')}` : ''}`;
+    }
+    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts, banned: CAFE_BANNED, check: noStoreCheck });
     return { ...w, photo: picked.photo, storeUrl: picked.url, storeName: null };
   };
 
@@ -141,6 +149,15 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   const record = async (w, r, extra = {}) => {
     // 公開できたら先に告知済みにする（後の保存で落ちても同じ記事を二度出さない）
     if (w.announceUrl) { try { await markAnnounced(w.announceUrl, w.text); } catch (e) { fail(`告知済みの記録に失敗: ${e.message}`); } }
+    if (w.type === 'quote') {
+      const q = (String(w.text).match(/「[^」]{2,80}」。?[^。\n]{0,40}/) || [])[0];
+      if (q) {
+        try {
+          const used = ((await store.getConfig('quotes')) || {}).used || [];
+          await store.setConfig('quotes', { used: [...used, q].slice(-QUOTES_KEEP) });
+        } catch (e) { fail(`名言の記録に失敗: ${e.message}`); }
+      }
+    }
     await store.savePost({ mediaId: r.mediaId, text: w.text, type: w.type, source: 'auto', permalink: r.permalink, postedAt: t.toISOString(), storeUrl: w.storeUrl, storeName: w.storeName, ...(w.tag ? { tag: w.tag } : {}), ...(w.photo ? { photoId: w.photo.id, photoName: w.photo.name } : {}), ...extra });
     out.posted.push({ mediaId: r.mediaId, permalink: r.permalink, type: w.type, store: w.storeName || '全店', ...(w.tag ? { tag: w.tag } : {}), ...extra });
     if (env.THREADS_COPY_TO_OWNER === 'true' || extra.manual) {
