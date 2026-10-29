@@ -67,7 +67,9 @@ function dueSlot(day, now = new Date(), { graceMin = DEFAULT_GRACE_MIN } = {}) {
   if (day.dateKey && day.dateKey !== jstDateKey(now)) return null;
   const nowMin = toMin(jstHm(now));
   const done = new Set((day.posted || []).map((p) => p.index));
-  for (let i = 0; i < day.slots.length; i++) {
+  // 時刻の早い順に見る（/admin/add-slots で後から足した枠は index が大きくても時刻が早いことがある）
+  const order = day.slots.map((s, i) => i).sort((a, b) => toMin(day.slots[a]) - toMin(day.slots[b]) || a - b);
+  for (const i of order) {
     if (done.has(i)) continue;
     const slotMin = toMin(day.slots[i]);
     if (nowMin < slotMin) continue;

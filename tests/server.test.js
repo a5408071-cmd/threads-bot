@@ -233,3 +233,15 @@ describe('/admin/add-slots', () => {
     expect(bad.status).toBe(400);
   });
 });
+
+test('/admin/add-slots: 同じ時刻の重複・30 分未満の近い枠・8 本超は断る', async () => {
+  const { createApp } = require('../src/server');
+  const { memoryStore } = require('../src/store');
+  const request = require('supertest');
+  const store = memoryStore({ now: () => new Date('2026-10-29T06:40:00Z'), prefix: 'threads_cafe_' });
+  await store.ensureDay('2026-10-29', () => ({ slots: ['13:21', '19:13'] }));
+  const app = createApp({ env: { CRON_KEY: 'k' }, cafeStore: store, now: () => new Date('2026-10-29T06:40:00Z') });
+  expect((await request(app).get('/admin/add-slots?account=cafe&slots=19:20').set('X-Cron-Key', 'k')).status).toBe(400);
+  expect((await request(app).get('/admin/add-slots?account=cafe&slots=16:00,16:00').set('X-Cron-Key', 'k')).body.slots).toEqual(['13:21', '19:13', '16:00']);
+  expect((await request(app).get('/admin/add-slots?account=cafe&slots=17:00,18:00,20:00,21:00,22:00,23:00').set('X-Cron-Key', 'k')).status).toBe(400);
+});

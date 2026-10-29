@@ -51,3 +51,10 @@ test('jstDateKey と jstHm は UTC の夜でも JST の翌日', () => {
   expect(jstDateKey(new Date('2026-10-27T16:05:00Z'))).toBe('2026-10-28');
   expect(jstHm(new Date('2026-10-27T16:05:00Z'))).toBe('01:05');
 });
+
+test('dueSlot は時刻の早い順に見る（後から足した早い時刻の枠を先に）', () => {
+  const { dueSlot } = require('../src/slots');
+  const day = { dateKey: '2026-10-29', slots: ['13:21', '19:13', '16:41'], posted: [{ index: 0 }] };
+  expect(dueSlot(day, new Date('2026-10-29T19:15:00+09:00'))).toMatchObject({ index: 2 });
+});
+

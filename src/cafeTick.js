@@ -85,7 +85,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   const readAnnounced = async () => {
     const urls = ((await store.getConfig('announced')) || {}).urls || {};
     const out = {};
-    for (const [u, v] of Object.entries(urls)) out[u] = typeof v === 'string' ? { days: [v], texts: [] } : Array.isArray(v) ? { days: v, texts: [] } : { days: v.days || [], texts: v.texts || [] }; // 旧形式（日付 1 つ・日付の並び）も読む
+    for (const [u, v] of Object.entries(urls)) out[u] = !v ? { days: [], texts: [] } : typeof v === 'string' ? { days: [v], texts: [] } : Array.isArray(v) ? { days: v, texts: [] } : { days: v.days || [], texts: v.texts || [] }; // 旧形式（日付 1 つ・日付の並び）も読む
     return out;
   };
   const pickAnnouncement = async ({ force = false } = {}) => {
@@ -106,7 +106,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   const markAnnounced = async (url, text) => {
     const cur = await readAnnounced();
     const r = cur[url] || { days: [], texts: [] };
-    cur[url] = { days: [...r.days, dateKey], texts: [...r.texts, text].slice(-announceDays) };
+    cur[url] = { days: r.days.includes(dateKey) ? r.days : [...r.days, dateKey], texts: [...r.texts, text].slice(-announceDays) };
     await store.setConfig('announced', { urls: cur });
   };
 
@@ -125,7 +125,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
         `- 見出し: ${a.item.title}`,
         `- 記事の日付: ${a.item.date}`,
         `- 本文:\n${a.text}`,
-        `この記事の告知は ${a.round || 1} 回目（全 ${announceDays} 回）。${(a.previous || []).length ? '前回までの告知文と、書き出し・切り口・取り上げる事実の順番・使い方の例・締めを変える（同じ文・同じ言い回しは使わない）:' : '1 回目なので、何がいつどこで始まるかを分かりやすく。'}`,
+        `この記事の告知は ${a.round || 1} 回目（全 ${announceDays} 回）。${(a.round || 1) > 1 ? ((a.previous || []).length ? '前回までの告知文と、書き出し・切り口・取り上げる事実の順番・使い方の例・締めを変える（同じ文・同じ言い回しは使わない）:' : '前回の告知とは書き出し・切り口・使い方の例を変える（前回の文は残っていない）。') : '1 回目なので、何がいつどこで始まるかを分かりやすく。'}`,
         ...(a.previous || []).map((p, k) => `  前回${k + 1}: ${String(p).replace(/\n/g, ' ')}`),
       ].join('\n');
       const w = await writer.writePost({ type, recent: [...(a.previous || []), ...recent.map((p) => p.text)], dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts, banned: CAFE_BANNED });
