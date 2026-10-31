@@ -144,3 +144,90 @@ describe('コメントへの自動返信（2026-10-28 社長「イソが自動�
     expect(threads.publishReply).not.toHaveBeenCalled();
   });
 });
+
+describe('公式: 質問・答えにくいコメントは HP のリンクで案内（2026-10-31 社長）', () => {
+  const LINKS = {
+    top: { url: 'https://selfcafe.jp/', label: 'トップ' },
+    faq: { url: 'https://selfcafe.jp/faq/', label: 'よくある質問' },
+    membership: { url: 'https://selfcafe.jp/membership/', label: 'サブスク' },
+  };
+  function mkGuide(answer, { storeUrl } = {}) {
+    const store = memoryStore({ now: () => NOW });
+    const threads = {
+      listMyPosts: jest.fn(async () => [P1]),
+      listReplies: jest.fn(async () => [{ id: 'r1', text: '料金はいくらですか？', username: 'bob', timestamp: 't', permalink: 'pr1', is_reply_owned_by_me: false }]),
+      publishReply: jest.fn(async () => ({ ok: true, mediaId: 'rep1', permalink: 'prep' })),
+    };
+    const anthropic = { messages: { create: jest.fn(async () => ({ content: [{ type: 'text', text: answer }], stop_reason: 'end_turn' })) } };
+    const replies = createReplies({ threads, store, notify: { owner: jest.fn(async () => ({ ok: true })) }, now: () => NOW, anthropic, env: { THREADS_AUTO_REPLY: 'true' }, guideLinks: LINKS });
+    return { replies, threads, anthropic, store, storeUrl };
+  }
+
+  test('[LINK:キー] を HP の URL に置き換えて返事する', async () => {
+    const { replies, threads, store } = mkGuide('ご質問ありがとうございます。料金はこちらにまとめています [LINK:membership]');
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    await replies.poll({ token: 'tk', userId: 'u1' });
+    expect(threads.publishReply.mock.calls[0][0].text).toBe('ご質問ありがとうございます。料金はこちらにまとめています\nhttps://selfcafe.jp/membership/');
+  });
+
+  test('知らないキーと、一覧に無い URL は消す', async () => {
+    const { replies, threads, store } = mkGuide('こちらをご覧ください https://example.com/x [LINK:nazo]');
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    await replies.poll({ token: 'tk', userId: 'u1' });
+    const t = threads.publishReply.mock.calls[0][0].text;
+    expect(t).not.toMatch(/example\.com/); expect(t).not.toMatch(/LINK/);
+  });
+
+  test('prompt に案内先の一覧と「質問・答えにくいときはリンクで案内」が入り、投稿の店のページも選べる', async () => {
+    const { replies, anthropic, store } = mkGuide('ありがとうございます！ [LINK:store]');
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    await store.savePost({ mediaId: 'm1', text: '安城駅前店がオープン', storeUrl: 'https://selfcafe.jp/shop/aichi/anjoeki/', storeName: '安城駅前店' });
+    const r = await replies.poll({ token: 'tk', userId: 'u1' });
+    const prompt = JSON.stringify(anthropic.messages.create.mock.calls[0][0]);
+    expect(prompt).toMatch(/LINK:faq/); expect(prompt).toMatch(/LINK:store/); expect(prompt).toMatch(/安城駅前店/);
+    expect(prompt).toMatch(/質問/);
+    expect(r.replied).toBe(1);
+  });
+
+  test('店のページが無い投稿で [LINK:store] を書いたらトップに落とす', async () => {
+    const { replies, threads, store } = mkGuide('詳しくはこちら [LINK:store]');
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    await replies.poll({ token: 'tk', userId: 'u1' });
+    expect(threads.publishReply.mock.calls[0][0].text).toBe('詳しくはこちら\nhttps://selfcafe.jp/');
+  });
+
+  test('guideLinks が無い（趣味アカウント）なら prompt にリンクの話は入らない', async () => {
+    const store = memoryStore({ now: () => NOW });
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    const anthropic = { messages: { create: jest.fn(async () => ({ content: [{ type: 'text', text: 'どうも' }] })) } };
+    const threads = { listMyPosts: jest.fn(async () => [P1]), listReplies: jest.fn(async () => [{ id: 'r1', text: 'こんにちは', username: 'b' }]), publishReply: jest.fn(async () => ({ ok: true })) };
+    await createReplies({ threads, store, notify: { owner: jest.fn(async () => ({ ok: true })) }, now: () => NOW, anthropic, env: { THREADS_AUTO_REPLY: 'true' } }).poll({ token: 't', userId: 'u' });
+    expect(JSON.stringify(anthropic.messages.create.mock.calls[0][0])).not.toMatch(/LINK:/);
+  });
+});
+
+describe('公式: リンクの後始末（レビュー指摘）', () => {
+  const LINKS = { top: { url: 'https://selfcafe.jp/', label: 'トップ' }, faq: { url: 'https://selfcafe.jp/faq/', label: 'FAQ' } };
+  async function run(answer, setup) {
+    const store = memoryStore({ now: () => NOW });
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    if (setup) await setup(store);
+    const threads = { listMyPosts: jest.fn(async () => [P1]), listReplies: jest.fn(async () => [{ id: 'r1', text: '質問です', username: 'b' }]), publishReply: jest.fn(async () => ({ ok: true })) };
+    const anthropic = { messages: { create: jest.fn(async () => ({ content: [{ type: 'text', text: answer }] })) } };
+    await createReplies({ threads, store, notify: { owner: jest.fn(async () => ({ ok: true })) }, now: () => NOW, anthropic, env: { THREADS_AUTO_REPLY: 'true' }, guideLinks: LINKS }).poll({ token: 't', userId: 'u' });
+    return threads.publishReply.mock.calls[0] && threads.publishReply.mock.calls[0][0].text;
+  }
+  test('日本語に続く許可済み URL は URL だけ抜いて末尾に回す（文は残す）', async () => {
+    expect(await run('詳しくはhttps://selfcafe.jp/faq/をご覧ください。')).toBe('詳しくはをご覧ください。\nhttps://selfcafe.jp/faq/');
+  });
+  test('URL の直後の「。」は URL に含めない', async () => {
+    expect(await run('こちらです https://selfcafe.jp/faq/。')).toBe('こちらです 。\nhttps://selfcafe.jp/faq/');
+  });
+  test('__proto__ などのキーは無視する', async () => {
+    expect(await run('どうぞ [LINK:constructor]')).toBe('どうぞ');
+  });
+  test('投稿の店のページが返事に付く', async () => {
+    const t = await run('ありがとうございます [LINK:store]', (s) => s.savePost({ mediaId: 'm1', text: '安城', storeUrl: 'https://selfcafe.jp/shop/aichi/anjoeki/', storeName: '安城駅前店' }));
+    expect(t).toBe('ありがとうございます\nhttps://selfcafe.jp/shop/aichi/anjoeki/');
+  });
+});

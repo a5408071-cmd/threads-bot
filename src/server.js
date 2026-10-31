@@ -74,7 +74,7 @@ function createApp(deps = {}) {
   let cafeReplies = deps.cafeReplies === undefined ? null : deps.cafeReplies;
   const getCafeReplies = () => {
     if (cafeReplies === null && deps.cafeReplies === undefined) {
-      try { cafeReplies = require('./replies').createReplies({ threads: getThreads(), store: getCafeStore(), notify: cafeNotify, now, anthropic: getAnthropic(), env, persona: require('./personaCafe'), label: '【公式】' }); } catch (e) { cafeReplies = null; }
+      try { cafeReplies = require('./replies').createReplies({ threads: getThreads(), store: getCafeStore(), notify: cafeNotify, now, anthropic: getAnthropic(), env, persona: require('./personaCafe'), label: '【公式】', guideLinks: require('./personaCafe').GUIDE_LINKS }); } catch (e) { cafeReplies = null; }
     }
     return cafeReplies;
   };

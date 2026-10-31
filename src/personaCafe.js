@@ -63,4 +63,16 @@ ${Object.entries(TYPE_GUIDE).map(([k, v]) => `- ${k} … ${v}`).join('\n')}
 # 出力
 本文 → 改行 → 「タグ: 〇〇」の順で返す。前置き・説明・引用符・見出しは付けない。`;
 
-module.exports = { SYSTEM, TYPE_GUIDE, DEFAULT_TAG, TYPES, ANNOUNCE_TYPES, FALLBACK_TAG: 'セルフカフェ' };
+// コメントの返事で案内する HP（2026-10-31 社長「質問があったときや回答が難しい場合はHPリンク付けて案内」）。
+// 投稿が店の記事なら replies.js がその店のページ（LINK:store）を足す。URL は 2026-10-31 に 200 を確認。
+const GUIDE_LINKS = {
+  top: { url: 'https://selfcafe.jp/', label: '公式サイトのトップ（全般）' },
+  shop: { url: 'https://selfcafe.jp/shop/', label: '店舗一覧（場所・近くの店）' },
+  faq: { url: 'https://selfcafe.jp/faq/', label: 'よくある質問（使い方・料金・Wi-Fi など）' },
+  membership: { url: 'https://selfcafe.jp/membership/', label: 'サブスク・会員' },
+  rentalspace: { url: 'https://selfcafe.jp/rentalspace/', label: '個室・会議室・レンタルスペース' },
+  contact: { url: 'https://selfcafe.jp/contact/', label: 'お問い合わせ（不満・トラブル・個別の相談）' },
+  franchise: { url: 'https://selfcafe.jp/franchise/', label: 'FC・出店の相談' },
+};
+
+module.exports = { SYSTEM, TYPE_GUIDE, DEFAULT_TAG, TYPES, ANNOUNCE_TYPES, FALLBACK_TAG: 'セルフカフェ', GUIDE_LINKS };
