@@ -412,8 +412,9 @@ describe('HP へ案内するときはリンクを付ける（2026-11-02 社長�
 describe('既存店の紹介（2026-11-02 社長「新店舗終わったら既存店も順次やろうかね そこそこ伸びそう」）', () => {
   const SHOP = { url: 'https://selfcafe.jp/shop/aichi/fujigaoka/', storeName: 'セルフカフェ 藤が丘店', facts: { name: 'セルフカフェ 藤が丘店', area: '名古屋市名東区', station: '藤が丘駅', hours: '7:00〜23:00', holiday: 'なし', seats: '30席', paid: { 個室ブース: true, 会議室: false, 会員専用エリア: false, コピー機: true } }, photo: PHOTO, photos: [PHOTO, { ...PHOTO, id: 'hp:y', url: 'https://selfcafe.jp/wp_control/wp-content/uploads/b.jpg' }], cycleDone: false };
   const mkShop = (over = {}) => {
-    const d = deps({ now: at('11:20', over.date || '2026-11-08'), news: over.news || [] });
+    const d = deps({ now: at(over.hm || '11:20', over.date || '2026-11-08'), news: over.news || [] });
     d.site.nextShop = jest.fn(async () => SHOP);
+    if (over.hm) d.draw = () => ({ slots: ['18:41'] }); // 夕方の枠だけ（朝の枠が「出し遅れ」で残らないように）
     d.writer.writePost = jest.fn(async ({ type }) => ({ ok: true, text: type === 'shop' ? '藤が丘駅から歩いてすぐの藤が丘店です' : '集中できます', type, attempts: 1, tag: type === 'shop' ? '名東区カフェ' : 'テレワーク' }));
     return d;
   };
@@ -441,12 +442,56 @@ describe('既存店の紹介（2026-11-02 社長「新店舗終わったら既�
     expect(d.site.nextShop.mock.calls[0][0]).toMatchObject({ today: '2026-11-08' });
   });
 
-  test('同じ日の 2 本目はふだんの回', async () => {
+  test('1 日 2 店: 2 店目は 16:00 より前ならふだんの回、16:00 以降なら既存店', async () => {
+    const OTHER = 'https://selfcafe.jp/shop/aichi/other/';
     const d = mkShop();
     await d.store.setToken(TOKEN);
-    await d.store.setConfig('shopIntro', { done: { [SHOP.url]: '2026-11-08' } });
+    await d.store.setConfig('shopIntro', { done: { [OTHER]: '2026-11-08' }, day: { date: '2026-11-08', n: 1 } });
     await runCafeTick(d);
     expect(d.writer.writePost.mock.calls[0][0].type).not.toBe('shop');
+    const e = mkShop({ hm: '18:50' });
+    await e.store.setToken(TOKEN);
+    await e.store.setConfig('shopIntro', { done: { [OTHER]: '2026-11-08' }, day: { date: '2026-11-08', n: 1 } });
+    await runCafeTick(e);
+    expect(e.writer.writePost.mock.calls[0][0].type).toBe('shop');
+    expect((await e.store.getConfig('shopIntro')).day).toEqual({ date: '2026-11-08', n: 2, lastAt: '18:50' });
+  });
+
+  test('2 店目は 1 店目から 3 時間あける。時刻の書式違いは 16:00 に戻す', async () => {
+    const d = mkShop({ hm: '18:50' });
+    await d.store.setToken(TOKEN);
+    await d.store.setConfig('shopIntro', { done: { a: '2026-11-08' }, day: { date: '2026-11-08', n: 1, lastAt: '16:20' } });
+    await runCafeTick(d);
+    expect(d.writer.writePost.mock.calls[0][0].type).not.toBe('shop');
+    const e = mkShop({ hm: '18:50' });
+    e.env.CAFE_SHOP_SECOND_FROM = '9:00';
+    await e.store.setToken(TOKEN);
+    await e.store.setConfig('shopIntro', { done: { a: '2026-11-08' } });
+    await runCafeTick(e);
+    expect(e.writer.writePost.mock.calls[0][0].type).toBe('shop');
+  });
+
+  test('3 店目は出さない（CAFE_SHOP_PER_DAY=1 なら 2 店目も出さない）', async () => {
+    const d = mkShop({ hm: '18:50' });
+    await d.store.setToken(TOKEN);
+    await d.store.setConfig('shopIntro', { done: { a: '2026-11-08', b: '2026-11-08' }, day: { date: '2026-11-08', n: 2 } });
+    await runCafeTick(d);
+    expect(d.writer.writePost.mock.calls[0][0].type).not.toBe('shop');
+    const e = mkShop({ hm: '18:50' });
+    e.env.CAFE_SHOP_PER_DAY = '1';
+    await e.store.setToken(TOKEN);
+    await e.store.setConfig('shopIntro', { done: { a: '2026-11-08' } }); // 以前の記録（day なし）も数える
+    await runCafeTick(e);
+    expect(e.writer.writePost.mock.calls[0][0].type).not.toBe('shop');
+  });
+
+  test('一周のリセットが 1 店目で起きても、その日の 2 店目は数えたまま', async () => {
+    const d = mkShop({ hm: '18:50' });
+    d.site.nextShop = jest.fn(async () => ({ ...SHOP, cycleDone: true }));
+    await d.store.setToken(TOKEN);
+    await d.store.setConfig('shopIntro', { done: { a: '2026-11-08' }, day: { date: '2026-11-08', n: 1 } });
+    await runCafeTick(d);
+    expect((await d.store.getConfig('shopIntro'))).toEqual({ done: { [SHOP.url]: '2026-11-08' }, day: { date: '2026-11-08', n: 2, lastAt: '18:50' } });
   });
 
   test('11/7 以前は出さない（CAFE_SHOP_INTRO_FROM で変えられる）。CAFE_SHOP_INTRO=false で止まる', async () => {

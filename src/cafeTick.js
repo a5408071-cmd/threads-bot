@@ -158,21 +158,34 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     await store.setConfig('announced', { urls: cur });
   };
 
-  // 既存店の紹介（2026-11-02 社長「新店舗終わったら既存店も順次やろうかね そこそこ伸びそう」→「なるべく新しい順に」）: 開始日以降、告知の無い日に 1 日 1 店、新しい店から一周ずつ
-  const readShopIntro = async () => ((await store.getConfig('shopIntro')) || {}).done || {};
+  // 既存店の紹介（2026-11-02 社長「新店舗終わったら既存店も順次やろうかね そこそこ伸びそう」→「なるべく新しい順に」）: 開始日以降、告知の無い日に 1 日 2 店（下）、新しい店から一周ずつ
+  // 2026-11-02 社長「本数増やす？店舗情報が溜まりすぎてる」→ 本数は 5 のまま、既存店を 1 日 2 店（2 店目は夕方以降＝1 店目と離す）。CAFE_SHOP_PER_DAY・CAFE_SHOP_SECOND_FROM で変えられる
+  const shopPerDay = () => Math.max(1, Number(env.CAFE_SHOP_PER_DAY) || 2);
+  const SECOND_FROM = /^\d{2}:\d{2}$/.test(env.CAFE_SHOP_SECOND_FROM || '') ? env.CAFE_SHOP_SECOND_FROM : '16:00'; // 書式違い（9:00 など）は既定に戻す
+  const SHOP_GAP_MIN = 180; // 1 店目が遅い枠で出た日も 3 時間はあける
+  const hmMin = (hm) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3));
+  const readShopConf = async () => (await store.getConfig('shopIntro')) || {};
+  const readShopIntro = async () => (await readShopConf()).done || {};
+  // その日に出した数（以前の記録は day が無いので done の今日の数も見る。一周のリセットで done が空になっても day で数え続ける）
+  const shopCountToday = (conf) => Math.max(conf.day && conf.day.date === dateKey ? Number(conf.day.n) || 0 : 0, Object.values(conf.done || {}).filter((v) => v === dateKey).length);
   const pickShop = async ({ force = false, recent = [] } = {}) => {
     if (env.CAFE_SHOP_INTRO === 'false' && !force) return null;
     if (!force && dateKey < (env.CAFE_SHOP_INTRO_FROM || SHOP_INTRO_FROM)) return null;
-    const done = await readShopIntro();
-    if (!force && Object.values(done).includes(dateKey)) return null;
+    const conf = await readShopConf();
+    const done = conf.done || {};
+    const n = shopCountToday(conf);
+    if (!force && n >= shopPerDay()) return null;
+    if (!force && n >= 1 && slots.jstHm(t) < SECOND_FROM) return null;
+    if (!force && n >= 1 && conf.day && conf.day.date === dateKey && conf.day.lastAt && hmMin(slots.jstHm(t)) - hmMin(conf.day.lastAt) < SHOP_GAP_MIN) return null;
     if (!force && Object.values(await readAnnounced()).some((v) => v.days.includes(dateKey))) return null; // 告知が出た日は既存店を出さない
     if (!site.nextShop) return null;
     const skip = recent.filter((p) => p.type === 'newstore' && p.storeUrl).map((p) => p.storeUrl); // 最近新店として告知した店は後回し
     return site.nextShop({ done: Object.keys(done), skip, today: dateKey });
   };
   const markShopIntro = async (url, cycleDone) => {
-    const done = cycleDone ? {} : await readShopIntro();
-    await store.setConfig('shopIntro', { done: { ...done, [url]: dateKey } });
+    const conf = await readShopConf();
+    const done = cycleDone ? {} : conf.done || {};
+    await store.setConfig('shopIntro', { done: { ...done, [url]: dateKey }, day: { date: dateKey, n: shopCountToday(conf) + 1, lastAt: slots.jstHm(t) } });
   };
 
   const compose = async () => withLink(await composeBody());
