@@ -2,7 +2,7 @@
  * threads-bot の HTTP 入口。
  *   GET  /health         … 生存確認
  *   GET  /cron/tick      … 10分おきの見回り（X-Cron-Key か ?key=）。?dry=1 は文を返すだけ、?test=1 は文を社長DMへ（投稿しない）
- *   POST /api/post       … イソからの投稿（X-Cron-Key。JSON {text, imageUrl?, source?, preview?, force?}）
+ *   POST /api/post       … イソからの投稿（X-Cron-Key。JSON {text, imageUrl?, topicTag?, linkUrl?, source?, preview?, force?}）
  *   GET  /admin/status   … 今日の枠・トークンの残り日数・直近の投稿（鍵そのものは返さない）
  *   GET  /oauth/start    … 社長が新垢でログインしたブラウザで開く（?key=）→ Threads の許可画面へ
  *   GET  /oauth/callback … Threads から戻る。code をトークンに換えて Firestore に保存
@@ -143,6 +143,9 @@ function createApp(deps = {}) {
     const text = String(body.text || '').trim();
     const imageUrl = body.imageUrl ? String(body.imageUrl).trim() : null;
     const source = String(body.source || 'iso');
+    const topicTag = body.topicTag ? String(body.topicTag).trim() : null; // トピックタグ（1つ）
+    const linkUrl = body.linkUrl ? String(body.linkUrl).trim() : null; // リンクのカード（写真とは併用しない）
+    if (linkUrl && !/^https:\/\//.test(linkUrl)) return res.status(400).json({ ok: false, error: 'linkUrl は https:// で始まる URL だけ' });
     if (!text) return res.status(400).json({ ok: false, error: '本文（text）が空です' });
     if (imageUrl && !/^https:\/\//.test(imageUrl)) return res.status(400).json({ ok: false, error: 'imageUrl は https:// で始まる誰でも開ける URL だけ' });
     const writer = deps.writer || require('./writer');
@@ -161,7 +164,7 @@ function createApp(deps = {}) {
       const store = getStore();
       const token = await store.getToken();
       if (!token || !token.token) return res.status(503).json({ ok: false, error: 'Threads の鍵が入っていません（/oauth/start で接続）' });
-      const r = await getThreads().publishPost({ token: token.token, userId: token.userId, text, ...(imageUrl ? { imageUrl } : {}) });
+      const r = await getThreads().publishPost({ token: token.token, userId: token.userId, text, ...(imageUrl ? { imageUrl } : {}), ...(topicTag ? { topicTag } : {}), ...(linkUrl && !imageUrl ? { linkAttachment: linkUrl } : {}) });
       if (!r.ok) {
         console.error(`[threads] API_POST_FAILED stage=${r.stage} ${r.error}`);
         return res.status(500).json({ ok: false, stage: r.stage, error: r.error });

@@ -66,4 +66,11 @@ describe('POST /api/post（イソからの写真付き投稿）', () => {
     const r2 = await request(app2).post('/api/post').set('X-Cron-Key', 'k').send({ text: 'x' }).expect(503);
     expect(r2.body.error).toMatch(/停止中/);
   });
+  test('topicTag と linkUrl（リンクのカード）を渡せる。linkUrl は https だけ', async () => {
+    const { app, threads } = await withToken(mk());
+    await request(app).post('/api/post').set('X-Cron-Key', 'k').send({ text: '掲示板の紹介', topicTag: 'ホノルルマラソン', linkUrl: 'https://nakamaboard.com/honolulu-2026' }).expect(200);
+    expect(threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ topicTag: 'ホノルルマラソン', linkAttachment: 'https://nakamaboard.com/honolulu-2026' }));
+    const r = await request(app).post('/api/post').set('X-Cron-Key', 'k').send({ text: 'x', linkUrl: 'javascript:1' }).expect(400);
+    expect(r.body.error).toMatch(/linkUrl/);
+  });
 });
