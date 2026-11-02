@@ -405,3 +405,76 @@ describe('HP へ案内するときはリンクを付ける（2026-11-02 社長�
     expect(d.threads.publishPost.mock.calls[0][0].text).toBe(long);
   });
 });
+
+describe('既存店の紹介（2026-11-02 社長「新店舗終わったら既存店も順次やろうかね そこそこ伸びそう」）', () => {
+  const SHOP = { url: 'https://selfcafe.jp/shop/aichi/fujigaoka/', storeName: 'セルフカフェ 藤が丘店', facts: { name: 'セルフカフェ 藤が丘店', area: '名古屋市名東区', station: '藤が丘駅', hours: '7:00〜23:00', holiday: 'なし', seats: '30席', paid: { 個室ブース: true, 会議室: false, 会員専用エリア: false, コピー機: true } }, photo: PHOTO, photos: [PHOTO, { ...PHOTO, id: 'hp:y', url: 'https://selfcafe.jp/wp_control/wp-content/uploads/b.jpg' }], cycleDone: false };
+  const mkShop = (over = {}) => {
+    const d = deps({ now: at('11:20', over.date || '2026-11-08'), news: over.news || [] });
+    d.site.nextShop = jest.fn(async () => SHOP);
+    d.writer.writePost = jest.fn(async ({ type }) => ({ ok: true, text: type === 'shop' ? '藤が丘駅から歩いてすぐの藤が丘店です' : '集中できます', type, attempts: 1, tag: type === 'shop' ? '名東区カフェ' : 'テレワーク' }));
+    return d;
+  };
+
+  test('11/8 から、告知の無い日に 1 日 1 店: 店の事実・店名入り・写真複数・最後に店舗ページのリンク', async () => {
+    const d = mkShop();
+    await d.store.setToken(TOKEN);
+    const r = await runCafeTick(d);
+    const call = d.writer.writePost.mock.calls[0][0];
+    expect(call.type).toBe('shop');
+    expect(call.facts).toMatch(/藤が丘店/);
+    expect(call.facts).toMatch(/個室ブース あり/);
+    expect(call.check).toBeUndefined(); // 店名・駅名を止める検査は掛けない
+    const sent = d.threads.publishPost.mock.calls[0][0];
+    expect(sent.imageUrls).toHaveLength(2);
+    expect(sent.text).toMatch(/\n▶ 店舗ページ https:\/\/selfcafe\.jp\/shop\/aichi\/fujigaoka\/$/);
+    expect(r.posted[0]).toMatchObject({ type: 'shop', store: 'セルフカフェ 藤が丘店' });
+    expect(((await d.store.getConfig('shopIntro')) || {}).done).toEqual({ [SHOP.url]: '2026-11-08' });
+  });
+
+  test('同じ日の 2 本目はふだんの回', async () => {
+    const d = mkShop();
+    await d.store.setToken(TOKEN);
+    await d.store.setConfig('shopIntro', { done: { [SHOP.url]: '2026-11-08' } });
+    await runCafeTick(d);
+    expect(d.writer.writePost.mock.calls[0][0].type).not.toBe('shop');
+  });
+
+  test('11/7 以前は出さない（CAFE_SHOP_INTRO_FROM で変えられる）。CAFE_SHOP_INTRO=false で止まる', async () => {
+    const d = mkShop({ date: '2026-11-07' });
+    await d.store.setToken(TOKEN);
+    await runCafeTick(d);
+    expect(d.site.nextShop).not.toHaveBeenCalled();
+    const e = mkShop();
+    e.env.CAFE_SHOP_INTRO = 'false';
+    await e.store.setToken(TOKEN);
+    await runCafeTick(e);
+    expect(e.site.nextShop).not.toHaveBeenCalled();
+  });
+
+  test('その日に新店などの告知があれば既存店は出さない（告知が優先）', async () => {
+    const d = mkShop({ news: [NEWS_ITEM] });
+    await d.store.setToken(TOKEN);
+    await d.store.setConfig('announced', { urls: { 'https://selfcafe.jp/newstore/other/': { days: ['2026-11-08'], texts: [] } } });
+    d.site.pendingAnnouncements = jest.fn(async () => []);
+    await runCafeTick(d);
+    expect(d.site.nextShop).not.toHaveBeenCalled();
+  });
+
+  test('一周したら記録をリセットして 2 周目へ', async () => {
+    const d = mkShop();
+    d.site.nextShop = jest.fn(async () => ({ ...SHOP, cycleDone: true }));
+    await d.store.setToken(TOKEN);
+    await d.store.setConfig('shopIntro', { done: { a: '2026-10-01', [SHOP.url]: '2026-10-02' } });
+    await runCafeTick(d);
+    expect((await d.store.getConfig('shopIntro')).done).toEqual({ [SHOP.url]: '2026-11-08' });
+  });
+
+  test('店の情報が取れなければふだんの回で出す（止めない）', async () => {
+    const d = mkShop();
+    d.site.nextShop = jest.fn(async () => { throw new Error('down'); });
+    await d.store.setToken(TOKEN);
+    const r = await runCafeTick(d);
+    expect(r.posted).toHaveLength(1);
+    expect(d.writer.writePost.mock.calls[0][0].type).not.toBe('shop');
+  });
+});

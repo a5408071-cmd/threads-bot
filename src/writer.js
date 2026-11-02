@@ -29,7 +29,7 @@ const LENGTH_BANDS = {
     { text: '200〜320字・4〜6文。今回は少し語る回（中身を1つ深める。話題を増やさない）', min: 160 },
   ],
 };
-const NO_TINY_TYPES = ['quote', 'newstore', 'campaign', 'media', 'countdown']; // 中身が要る型は「ひと言」の回にしない
+const NO_TINY_TYPES = ['quote', 'newstore', 'campaign', 'media', 'countdown', 'shop']; // 中身が要る型は「ひと言」の回にしない
 
 function pickLength({ photo, type, rand = Math.random }) {
   const bands = LENGTH_BANDS[photo ? 'photo' : 'text'];

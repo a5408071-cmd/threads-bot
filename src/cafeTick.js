@@ -7,7 +7,8 @@
  */
 const slots = require('./slots');
 const personaCafe = require('./personaCafe');
-const { announcementDate } = require('./cafeSite');
+const { announcementDate, factsText } = require('./cafeSite');
+const SHOP_INTRO_FROM = '2026-11-08'; // 既存店の紹介を始める日（新店の告知が一段落してから。CAFE_SHOP_INTRO_FROM で上書き）
 const { daysLeft, REFRESH_BEFORE_DAYS } = require('./tick');
 
 // 1 日 5 本（2026-10-29 社長「毎日5投稿いける」）。窓どうしを 90 分あけて、間隔の下限（slots の MIN_GAP_MIN）を必ず守れるようにしてある
@@ -49,7 +50,7 @@ function withLink(w) {
   if (!w || !w.ok || w.linkUrl) return w; // メディア掲載はリンクのカードが付く
   const G = personaCafe.GUIDE_LINKS;
   let line = null;
-  if (w.type === 'newstore' && (w.storeUrl || w.announceUrl)) line = `▶ 店舗ページ ${w.storeUrl || w.announceUrl}`;
+  if ((w.type === 'newstore' || w.type === 'shop') && (w.storeUrl || w.announceUrl)) line = `▶ 店舗ページ ${w.storeUrl || w.announceUrl}`;
   else if (w.type === 'campaign' && (w.announceUrl || w.storeUrl)) line = `▶ 詳しくはこちら ${w.announceUrl || w.storeUrl}`;
   else if (HP_MENTION_RE.test(w.text)) line = (w.type === 'membership' || /サブスク|会員|月額/.test(w.text)) ? `▶ サブスクの詳細 ${G.membership.url}` : `▶ 公式サイト ${G.top.url}`;
   if (!line) return w;
@@ -156,6 +157,23 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     await store.setConfig('announced', { urls: cur });
   };
 
+  // 既存店の紹介（2026-11-02 社長「新店舗終わったら既存店も順次やろうかね そこそこ伸びそう」）: 開始日以降、告知の無い日に 1 日 1 店、一覧の順に一周ずつ
+  const readShopIntro = async () => ((await store.getConfig('shopIntro')) || {}).done || {};
+  const pickShop = async ({ force = false, recent = [] } = {}) => {
+    if (env.CAFE_SHOP_INTRO === 'false' && !force) return null;
+    if (!force && dateKey < (env.CAFE_SHOP_INTRO_FROM || SHOP_INTRO_FROM)) return null;
+    const done = await readShopIntro();
+    if (!force && Object.values(done).includes(dateKey)) return null;
+    if (!force && Object.values(await readAnnounced()).some((v) => v.days.includes(dateKey))) return null; // 告知が出た日は既存店を出さない
+    if (!site.nextShop) return null;
+    const skip = recent.filter((p) => p.type === 'newstore' && p.storeUrl).map((p) => p.storeUrl); // 最近新店として告知した店は後回し
+    return site.nextShop({ done: Object.keys(done), skip });
+  };
+  const markShopIntro = async (url, cycleDone) => {
+    const done = cycleDone ? {} : await readShopIntro();
+    await store.setConfig('shopIntro', { done: { ...done, [url]: dateKey } });
+  };
+
   const compose = async () => withLink(await composeBody());
   const composeBody = async () => {
     const recent = (await store.recentPosts(RECENT_POSTS)).map((p) => ({ ...p, text: stripLink(p.text) }));
@@ -189,6 +207,16 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
       const w = await writer.writePost({ type, recent: [...(a.previous || []).map(stripLink), ...recent.map((p) => p.text)], dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED });
       return { ...w, photo: a.photo, ...(a.photos && a.photos.length >= 2 ? { photos: a.photos } : {}), storeUrl: a.shopUrl, storeName: a.storeName, announceUrl: a.item.url, ...(a.linkUrl ? { linkUrl: a.linkUrl } : {}) };
     }
+    if (!forceType || forceType === 'shop') {
+      let shop = null;
+      try { shop = await pickShop({ force: forceType === 'shop', recent }); } catch (e) { console.warn(`[threads] CAFE_SHOP_FAILED ${e.message}`); }
+      if (forceType === 'shop' && !shop) return { ok: false, reason: '紹介できる既存店が取れない', type: 'shop' };
+      if (shop) {
+        const facts = `今回は既存店を 1 店紹介する回です。店名・エリア・最寄駅を書いてよい。\n${factsText(shop.facts)}`;
+        const w = await writer.writePost({ type: 'shop', recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: shop.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED });
+        return { ...w, photo: shop.photo, ...(shop.photos ? { photos: shop.photos } : {}), storeUrl: shop.url, storeName: shop.storeName, shopIntro: { url: shop.url, cycleDone: Boolean(shop.cycleDone) } };
+      }
+    }
     const type = forceType || pickCafeType(recent.map((p) => p.type), Math.random, weights);
     const picked = await site.pickPhoto({ recentUrls: recent.map((p) => p.storeUrl).filter(Boolean) });
     let facts = GENERAL_FACTS;
@@ -205,6 +233,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   const record = async (w, r, extra = {}) => {
     // 公開できたら先に告知済みにする（後の保存で落ちても同じ記事を二度出さない）
     if (w.announceUrl) { try { await markAnnounced(w.announceUrl, w.text); } catch (e) { fail(`告知済みの記録に失敗: ${e.message}`); } }
+    if (w.shopIntro) { try { await markShopIntro(w.shopIntro.url, w.shopIntro.cycleDone); } catch (e) { fail(`既存店の紹介の記録に失敗: ${e.message}`); } }
     if (w.type === 'quote') {
       const q = (String(w.text).match(/「[^」]{2,80}」。?[^。\n]{0,40}/) || [])[0];
       if (q) {

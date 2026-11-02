@@ -397,3 +397,8 @@ describe('長さのくじ（2026-10-29 社長「文字数がいつも同じぐ�
     expect(userOf(a)).toMatch(/90〜160字/);
   });
 });
+
+test('既存店の紹介（shop）は「ひと言」の短い回にしない（2026-11-02 レビュー指摘）', () => {
+  const { pickLength } = require('../src/writer');
+  expect(pickLength({ photo: true, type: 'shop', rand: () => 0 })).not.toEqual(pickLength({ photo: true, type: 'work', rand: () => 0 }));
+});

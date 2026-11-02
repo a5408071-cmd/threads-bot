@@ -301,7 +301,28 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
     return { item, text: entry.text, shopUrl: entry.shopUrl, storeName, photo, ...(photos ? { photos } : {}), kind: ANNOUNCE_CATEGORIES[item.category] };
   }
 
-  return { listStores, storeFacts, pickStore, pickPhoto, pendingAnnouncements, announcement };
+  /** 既存店の紹介（2026-11-02 社長「既存店も順次」）: 一覧の順に、まだ紹介していない店（done・skip 以外）を 1 つ。全店済みなら最初から（cycleDone） */
+  async function nextShop({ done = [], skip = [] } = {}) {
+    const all = await listStores();
+    if (!all.length) throw new Error('selfcafe.jp の店舗一覧が読めない');
+    const usable = all.filter((u) => !skip.includes(u));
+    const pool = usable.length ? usable : all;
+    const fresh = pool.filter((u) => !done.includes(u));
+    const cycleDone = !fresh.length;
+    // ページが読めない店は飛ばして次へ（1 店の不調で一周が止まらないように）。全店だめなら投げる
+    let url = null;
+    let facts = null;
+    let lastErr = null;
+    for (const u of (cycleDone ? pool : fresh)) {
+      try { facts = await storeFacts(u); url = u; break; } catch (e) { lastErr = e; console.warn(`[threads] CAFE_SHOP_PAGE_FAILED ${u} ${e.message}`); }
+    }
+    if (!url) throw lastErr || new Error('紹介できる店のページが読めない');
+    const storeName = facts.name || null;
+    const got = await fetchPhotos(facts.images, `HP: ${storeName || url}`);
+    return { url, facts, storeName, photo: got[0] || null, ...(got.length >= 2 ? { photos: got } : {}), cycleDone };
+  }
+
+  return { listStores, storeFacts, pickStore, pickPhoto, pendingAnnouncements, announcement, nextShop };
 }
 
 module.exports = { createCafeSite, parseStoreList, parseStorePage, factsText, parseNewsList, parseNewsEntry, parseMediaList, parseMediaEntry, MEDIA_URL, announcementDate, isAnnounceable, SHOP_LIST_URL, NEWS_URL, ANNOUNCE_CATEGORIES };

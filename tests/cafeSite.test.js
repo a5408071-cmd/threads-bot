@@ -167,3 +167,36 @@ test('announcement(item, { multi: true }): 店舗ページの写真を複数（�
   const one = await site.announcement(NEWSTORE);
   expect(one.photos).toBeUndefined();
 });
+
+describe('既存店の紹介（2026-11-02 社長「新店舗終わったら既存店も順次やろうかね」）', () => {
+  const http = () => ({ get: jest.fn(async (url) => {
+    if (url === 'https://selfcafe.jp/shop/') return { data: LIST };
+    if (/\/shop\/aichi\//.test(url)) return { data: PAGE.replace('藤が丘店', url.includes('akatsuka') ? '赤塚店' : '安城駅店') };
+    if (/uploads/.test(url)) return { status: 200, headers: { 'content-type': 'image/jpeg' }, data: Buffer.from('img') };
+    throw new Error('unexpected ' + url);
+  }) });
+  test('nextShop: 一覧の順に、まだ紹介していない店を選ぶ。事実・店名・写真を複数返す', async () => {
+    const r = await createCafeSite({ http: http() }).nextShop({ done: ['https://selfcafe.jp/shop/aichi/akatsuka/'] });
+    expect(r).toMatchObject({ url: 'https://selfcafe.jp/shop/aichi/anjoeki/', storeName: 'セルフカフェ 安城駅店', cycleDone: false });
+    expect(r.facts.area).toBe('名古屋市名東区');
+    expect(r.photos.length).toBeGreaterThanOrEqual(2);
+    expect(r.photo).toBe(r.photos[0]);
+  });
+  test('nextShop: 全店紹介し終えたら最初の店からもう一周（cycleDone: true）', async () => {
+    const r = await createCafeSite({ http: http() }).nextShop({ done: ['https://selfcafe.jp/shop/aichi/akatsuka/', 'https://selfcafe.jp/shop/aichi/anjoeki/'] });
+    expect(r).toMatchObject({ url: 'https://selfcafe.jp/shop/aichi/akatsuka/', cycleDone: true });
+  });
+  test('nextShop: skip（新店として最近告知した店）は飛ばす', async () => {
+    const r = await createCafeSite({ http: http() }).nextShop({ done: [], skip: ['https://selfcafe.jp/shop/aichi/akatsuka/'] });
+    expect(r.url).toBe('https://selfcafe.jp/shop/aichi/anjoeki/');
+  });
+  test('nextShop: 店舗ページが読めない店は飛ばして次の店へ（全店だめなら投げる）', async () => {
+    const h = http();
+    const orig = h.get.getMockImplementation();
+    h.get.mockImplementation(async (url, o) => { if (url.includes('akatsuka')) throw new Error('500'); return orig(url, o); });
+    const r = await createCafeSite({ http: h }).nextShop({ done: [] });
+    expect(r.url).toBe('https://selfcafe.jp/shop/aichi/anjoeki/');
+    const bad = { get: jest.fn(async (url) => { if (url === 'https://selfcafe.jp/shop/') return { data: LIST }; throw new Error('500'); }) };
+    await expect(createCafeSite({ http: bad }).nextShop({ done: [] })).rejects.toThrow();
+  });
+});
