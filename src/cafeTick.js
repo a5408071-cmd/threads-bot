@@ -51,7 +51,7 @@ function pickCafeType(recentTypes, rng = Math.random) {
   return pool[Math.floor(rng() * pool.length)];
 }
 
-async function runCafeTick({ env = process.env, store, threads, writer, notify, anthropic, site, now = () => new Date(), mode = 'live', replies = null, forcePost = false, forceType = null, draw = null }) {
+async function runCafeTick({ env = process.env, store, threads, writer, notify, anthropic, site, now = () => new Date(), mode = 'live', replies = null, growth = null, forcePost = false, forceType = null, draw = null }) {
   const t = now();
   const dateKey = slots.jstDateKey(t);
   const out = { ok: true, account: 'cafe', mode, dateKey, slots: null, due: null, posted: [], skipped: [], preview: null, token: null, replies: null, errors: [] };
@@ -234,6 +234,15 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
       const r = await publish(w);
       if (!r.ok) fail(`投稿失敗（${r.stage}）: ${r.error}`);
       else await record(w, r, { manual: true });
+    }
+  }
+
+  // 数字の記録（毎朝 7:00〜7:09。週次の分析は趣味用の型の話なので公式ではしない）。2026-11-02 社長「セルフカフェの方インサイト見ることできる？」
+  if (growth && !noToken && mode === 'live') {
+    const hm = slots.jstHm(t);
+    if (hm >= '07:00' && hm < '07:10') {
+      out.growth = {};
+      try { out.growth.daily = await growth.daily(token); } catch (e) { fail(`数字の記録でエラー: ${e.message}`); }
     }
   }
 

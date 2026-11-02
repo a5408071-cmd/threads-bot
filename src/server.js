@@ -78,7 +78,13 @@ function createApp(deps = {}) {
     }
     return cafeReplies;
   };
-  const runCafe = (mode, extra = {}) => (deps.cafeTick || require('./cafeTick')).runCafeTick({ env, store: getCafeStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: cafeNotify, anthropic: getAnthropic(), site: getCafeSite(), now, mode, replies: getCafeReplies(), ...extra });
+  // 公式の数字（フォロワー数・投稿ごとの表示など）。2026-11-02 社長「セルフカフェの方インサイト見ることできる？」
+  let cafeGrowth = deps.cafeGrowth === undefined ? null : deps.cafeGrowth;
+  const getCafeGrowth = () => {
+    if (cafeGrowth === null && deps.cafeGrowth === undefined) cafeGrowth = require('./growth').createGrowth({ threads: getThreads(), store: getCafeStore(), notify: cafeNotify, anthropic: getAnthropic(), env, now });
+    return cafeGrowth;
+  };
+  const runCafe = (mode, extra = {}) => (deps.cafeTick || require('./cafeTick')).runCafeTick({ env, store: getCafeStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: cafeNotify, anthropic: getAnthropic(), site: getCafeSite(), now, mode, replies: getCafeReplies(), growth: getCafeGrowth(), ...extra });
   const storeFor = (account) => (account === 'cafe' ? getCafeStore() : getStore());
   const redirectUri = () => `${String(env.PUBLIC_BASE_URL || '').replace(/\/+$/, '')}/oauth/callback`;
   const app = express();
@@ -253,17 +259,25 @@ function createApp(deps = {}) {
     }
   });
 
-  // 成長の仕組みを今すぐ走らせる（確認用。?daily=1 / ?weekly=1）
+  // 成長の仕組みを今すぐ走らせる（確認用。?daily=1 / ?weekly=1 / ?report=1＝直近 7 日の数字の表。?account=cafe で公式）
   app.get('/admin/growth', async (req, res) => {
     if (!gate(req, res)) return;
     try {
-      const tok = await getStore().getToken();
+      const cafe = req.query.account === 'cafe';
+      if (cafe && req.query.weekly === '1') return res.status(400).json({ ok: false, error: '週次の分析は趣味用だけ' });
+      const st = storeFor(cafe ? 'cafe' : 'hobby');
+      const tok = await st.getToken();
       if (!tok || !tok.token) return res.status(503).json({ ok: false, error: '鍵なし' });
-      const g = getGrowth();
+      const g = cafe ? getCafeGrowth() : getGrowth();
       const out = {};
       if (req.query.daily === '1') out.daily = await g.daily(tok);
       if (req.query.weekly === '1') out.weekly = await g.weekly(tok);
-      if (req.query.weights === '1') out.weights = await g.weightsFor();
+      if (req.query.weights === '1' && !cafe) out.weights = await g.weightsFor();
+      if (req.query.report === '1') {
+        const since = now().getTime() - 7 * 86400000;
+        const posts = (await st.recentPosts(60)).filter((p) => new Date(p.postedAt).getTime() >= since);
+        out.report = require('./growth').createGrowth({ threads: null, store: st, notify: null, anthropic: null, env, now }).summarize(posts, (await st.listMetrics(30)).filter((m) => m.followers != null));
+      }
       res.json(out);
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });

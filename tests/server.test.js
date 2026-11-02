@@ -146,6 +146,23 @@ describe('/admin/growth と審査用の固定ページ', () => {
     const r2 = await request(app).get('/admin/growth?key=k&weekly=1').expect(200);
     expect(r2.body).toMatchObject({ weekly: { ok: true } });
   });
+  test('?account=cafe は公式の鍵と記録で数字を取る。?report=1 はフォロワーの推移と投稿ごとの数字を返す（2026-11-02 社長「セルフカフェの方インサイト見ることできる？」）', async () => {
+    const store = memoryStore();
+    const cafeStore = memoryStore({ prefix: 'threads_cafe_' });
+    await cafeStore.setToken({ token: 'ctk', userId: 'c1', expiresAt: '2026-12-20T00:00:00.000Z' });
+    await cafeStore.setMetric('2026-11-02', { followers: 15 });
+    await cafeStore.savePost({ mediaId: 'm1', type: 'study', text: '勉強の投稿', postedAt: new Date().toISOString(), insights: { views: 120, likes: 4, replies: 1 } });
+    const growth = { daily: jest.fn(), weekly: jest.fn(), weightsFor: jest.fn() };
+    const cafeGrowth = { daily: jest.fn(async () => ({ ok: true, followers: 15 })), weekly: jest.fn() };
+    const app = createApp({ env: { CRON_KEY: 'k' }, store, cafeStore, growth, cafeGrowth });
+    const r = await request(app).get('/admin/growth?key=k&account=cafe&daily=1&report=1').expect(200);
+    expect(cafeGrowth.daily).toHaveBeenCalledWith(expect.objectContaining({ token: 'ctk' }));
+    expect(growth.daily).not.toHaveBeenCalled();
+    expect(r.body.daily).toMatchObject({ followers: 15 });
+    expect(r.body.report).toMatch(/2026-11-02: 15/);
+    expect(r.body.report).toMatch(/study | なし | .* | 120 | 4 | 1 | 勉強の投稿/);
+    await request(app).get('/admin/growth?key=k&account=cafe&weekly=1').expect(400);
+  });
   test('/privacy /terms /data-deletion は誰でも開ける（Meta の審査で URL が要る）', async () => {
     const app = createApp({ env: { CRON_KEY: 'k' } });
     for (const p of ['/privacy', '/terms', '/data-deletion']) {

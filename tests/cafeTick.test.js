@@ -313,3 +313,33 @@ test('OPEN 済みの新店の告知は写真を複数（カルーセル）。OPE
   expect(d2.threads.publishPost.mock.calls[0][0].imageUrl).toBe(PHOTO.url);
   expect(d2.threads.publishPost.mock.calls[0][0].imageUrls).toBeUndefined();
 });
+
+describe('公式の数字（2026-11-02 社長「セルフカフェの方インサイト見ることできる？」）', () => {
+  test('毎朝 7:00〜7:09 の見回りでフォロワー数と投稿の数字を記録する（週次の分析は趣味用だけ）', async () => {
+    const d = deps({ now: at('07:05') });
+    await d.store.setToken(TOKEN);
+    const growth = { daily: jest.fn(async () => ({ ok: true, followers: 12 })), weekly: jest.fn() };
+    const r = await runCafeTick({ ...d, growth, draw: () => ({ slots: ['11:17'] }) });
+    expect(growth.daily).toHaveBeenCalledWith(expect.objectContaining({ token: 'ctk' }));
+    expect(growth.weekly).not.toHaveBeenCalled();
+    expect(r.growth).toEqual({ daily: { ok: true, followers: 12 } });
+  });
+
+  test('7 時台の前半以外・dry では記録しない', async () => {
+    for (const [hm, mode] of [['08:05', 'live'], ['07:05', 'dry']]) {
+      const d = deps({ now: at(hm), mode });
+      await d.store.setToken(TOKEN);
+      const growth = { daily: jest.fn(async () => ({ ok: true })) };
+      await runCafeTick({ ...d, growth, draw: () => ({ slots: ['11:17'] }) });
+      expect(growth.daily).not.toHaveBeenCalled();
+    }
+  });
+
+  test('記録に失敗しても投稿の見回りは止めない（errors に残す）', async () => {
+    const d = deps({ now: at('07:05') });
+    await d.store.setToken(TOKEN);
+    const growth = { daily: jest.fn(async () => { throw new Error('boom'); }) };
+    const r = await runCafeTick({ ...d, growth, draw: () => ({ slots: ['11:17'] }) });
+    expect(r.errors.join()).toMatch(/数字の記録.*boom/);
+  });
+});
