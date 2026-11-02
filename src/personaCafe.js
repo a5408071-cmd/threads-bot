@@ -67,12 +67,15 @@ ${Object.entries(TYPE_GUIDE).map(([k, v]) => `- ${k} … ${v}`).join('\n')}
 本文 → 改行 → 「タグ: 〇〇」の順で返す。前置き・説明・引用符・見出しは付けない。`;
 
 // コメントの返事で案内する HP（2026-10-31 社長「質問があったときや回答が難しい場合はHPリンク付けて案内」）。
-// 投稿が店の記事なら replies.js がその店のページ（LINK:store）を足す。URL は 2026-10-31 に 200 を確認。
+// 投稿が店の記事か、コメントに店名があれば replies.js がその店のページ（LINK:store）を足す。URL は 2026-10-31・11-02 に 200 を確認。
+// 2026-11-02 社長「ドリンクの値段はQ&Aにはない。全体の案内の場合はTOPページ、特定の店舗の時は子ページのTOP、サブスクの時はサブスクのページ、使い方の時は使い方ページ」
+//   （「ドリンク一杯いくらですか？」に よくある質問 のページを案内していた）
 const GUIDE_LINKS = {
-  top: { url: 'https://selfcafe.jp/', label: '公式サイトのトップ（全般）' },
-  shop: { url: 'https://selfcafe.jp/shop/', label: '店舗一覧（場所・近くの店）' },
-  faq: { url: 'https://selfcafe.jp/faq/', label: 'よくある質問（使い方・料金・Wi-Fi など）' },
-  membership: { url: 'https://selfcafe.jp/membership/', label: 'サブスク・会員' },
+  top: { url: 'https://selfcafe.jp/', label: '公式サイトのトップ。全店にかかわる案内はここ（ドリンクの値段・何ができる店か・全般の質問）' },
+  usage: { url: 'https://selfcafe.jp/usage/', label: '使い方（入り方・ドリンクの買い方・席の使い方・離席と再入場）' },
+  membership: { url: 'https://selfcafe.jp/membership/', label: 'サブスク・会員プラン（月額・プランの話はここ）' },
+  shop: { url: 'https://selfcafe.jp/shop/', label: '店舗一覧（近くに店があるか・場所を探している）' },
+  faq: { url: 'https://selfcafe.jp/faq/', label: 'よくある質問（Wi-Fi・忘れ物・マシンの不具合など細かい疑問。ドリンクの値段は載っていないので値段の質問には使わない）' },
   rentalspace: { url: 'https://selfcafe.jp/rentalspace/', label: '個室・会議室・レンタルスペース' },
   contact: { url: 'https://selfcafe.jp/contact/', label: 'お問い合わせ（不満・トラブル・個別の相談）' },
   franchise: { url: 'https://selfcafe.jp/franchise/', label: 'FC・出店の相談' },

@@ -53,7 +53,12 @@ function withLink(w) {
   let line = null;
   if ((w.type === 'newstore' || w.type === 'shop') && (w.storeUrl || w.announceUrl)) line = `▶ 店舗ページ ${w.storeUrl || w.announceUrl}`;
   else if (w.type === 'campaign' && (w.announceUrl || w.storeUrl)) line = `▶ 詳しくはこちら ${w.announceUrl || w.storeUrl}`;
-  else if (HP_MENTION_RE.test(w.text)) line = (w.type === 'membership' || /サブスク|会員|月額/.test(w.text)) ? `▶ サブスクの詳細 ${G.membership.url}` : `▶ 公式サイト ${G.top.url}`;
+  else if (HP_MENTION_RE.test(w.text)) {
+    // 2026-11-02 社長「サブスクの時はサブスクのページ 使い方の時は使い方ページ 全体の案内の場合はTOPページ」
+    if (w.type === 'membership' || /サブスク|会員|月額/.test(w.text)) line = `▶ サブスクの詳細 ${G.membership.url}`;
+    else if (w.type === 'howto' || /使い方|利用方法|入り方/.test(w.text)) line = `▶ 使い方はこちら ${G.usage.url}`;
+    else line = `▶ 公式サイト ${G.top.url}`;
+  }
   if (!line) return w;
   const text = `${w.text.replace(/\s+$/, '')}\n\n${line}`;
   return text.length > POST_MAX ? w : { ...w, text };

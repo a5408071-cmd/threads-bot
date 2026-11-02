@@ -12,15 +12,23 @@ const TEXT_MAX = 100;
 const REPLY_MAX = 200;
 const REPLY_MODEL = 'claude-opus-5-5';
 
-function createReplies({ threads, store, notify, now = () => new Date(), anthropic = null, env = process.env, persona: P = persona, label = '', guideLinks = null }) {
+function createReplies({ threads, store, notify, now = () => new Date(), anthropic = null, env = process.env, persona: P = persona, label = '', guideLinks = null, site = null }) {
   const cut = (s, n = TEXT_MAX) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n)}…` : t; };
   const autoReply = () => env.THREADS_AUTO_REPLY === 'true' && Boolean(anthropic);
 
-  /** 公式: 案内先の一覧（キー→{url,label}）。投稿が店の記事ならその店のページを store として足す */
-  function linksFor(post) {
+  /**
+   * 公式: 案内先の一覧（キー→{url,label}）。特定の店のページ（store）は、コメントに店名があればその店（店舗一覧から引く）、
+   * 無ければ投稿が店の記事のときその店。2026-11-02 社長「特定の店舗の時は子ページのTOPを案内して」
+   */
+  async function linksFor(post, comment) {
     if (!guideLinks) return null;
     const links = { ...guideLinks };
-    if (post && post.storeUrl) links.store = { url: post.storeUrl, label: `${post.storeName || 'この店'}のページ` };
+    let hit = null;
+    if (site && site.findStore && comment && comment.text) {
+      try { hit = await site.findStore(comment.text); } catch (e) { console.warn(`[threads] REPLY_STORE_LOOKUP_FAILED ${e.message}`); }
+    }
+    if (hit) links.store = { url: hit.url, label: `${hit.name}のページ（コメントに出てきた店。この店の話ならここ）` };
+    else if (post && post.storeUrl) links.store = { url: post.storeUrl, label: `${post.storeName || 'この店'}のページ（投稿で紹介した店）` };
     return links;
   }
 
@@ -30,7 +38,7 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
     let url = null;
     let body = text.replace(/\[LINK:([a-z_]+)\]/gi, (m, key) => {
       const own = (k) => (Object.prototype.hasOwnProperty.call(links, k) ? links[k] : null);
-      const l = own(key) || (key === 'store' ? own('top') : null);
+      const l = own(key) || (key === 'store' ? (own('shop') || own('top')) : null);
       if (l && !url) url = l.url;
       return '';
     });
@@ -46,10 +54,11 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
 
   /** コメントへの返事を AI に書かせる。SKIP なら null */
   async function draftReply({ comment, post }) {
-    const links = linksFor(post);
+    const links = await linksFor(post, comment);
     const guide = links ? [
       '',
       '質問（料金・営業時間・場所・使い方・サブスク・予約など）や、事実が分からず答えにくいコメントには、分かる範囲でひと言答え、最後に「[LINK:キー]」を 1 つだけ付けて HP へ案内する（数字・営業時間・設備は書かずリンクに任せる）。',
+      '案内先の選び方: 特定の店の話（店名が出ている・その店の営業時間や場所）→ LINK:store（無ければ LINK:shop）／サブスク・会員・月額 → LINK:membership／入り方・ドリンクの買い方・席の使い方 → LINK:usage／それ以外の全店にかかわる案内（ドリンクの値段・何ができる店か など）→ LINK:top。よくある質問（faq）にドリンクの値段は載っていない。',
       '答えにくいコメント（不満・トラブル・個別の事情）も SKIP にせず、ていねいに受け止めて HP（お問い合わせ）へ案内する。ただの感想・あいさつにはリンクを付けない。URL は書かない。',
       '案内先（キー: 中身）:',
       ...Object.entries(links).map(([k, l]) => `  LINK:${k}: ${l.label}`),

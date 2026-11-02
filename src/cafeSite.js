@@ -23,6 +23,7 @@ const MULTI_PHOTO_MAX = 5; // OPEN 済みの新店の告知で使う写真の枚
 const PAID_LABELS = ['個室ブース', '会議室', '会員専用エリア', 'コピー機'];
 const ROW_KEYS = ['店舗名', '決済方法', '営業時間', '定休日', '席数', '住所', '駐車場', 'アクセス', 'アクセス方法', '有料サービス', 'Coffee'];
 const CACHE_MS = 6 * 60 * 60 * 1000;
+const NAMES_FAIL_CACHE_MS = 5 * 60 * 1000; // 店舗一覧が読めなかったあと、店名探しを休む時間
 
 function parseStoreList(html) {
   const out = [];
@@ -30,6 +31,40 @@ function parseStoreList(html) {
     if (!out.includes(m[1])) out.push(m[1]);
   }
   return out;
+}
+
+/** 店舗一覧から店名・住所付きの一覧（コメントの店名から店のページを引くため。2026-11-02 社長「特定の店舗の時は子ページのTOPを案内して」） */
+function parseStoreNames(html) {
+  const out = [];
+  const re = /<a href="(https:\/\/selfcafe\.jp\/shop\/[a-z]+\/[^/"]+\/)">([\s\S]*?)<\/a>/g;
+  for (const m of String(html || '').matchAll(re)) {
+    const name = (m[2].match(/shop-listItem_name">([^<]*)</) || [])[1];
+    const address = (m[2].match(/shop-listItem_address">([^<]*)</) || [])[1];
+    if (!name || out.some((s) => s.url === m[1])) continue;
+    out.push({ url: m[1], name: name.trim(), address: (address || '').trim() });
+  }
+  return out;
+}
+
+/**
+ * 文中に出てくる店を 1 つ当てる（「セルフカフェ 藤が丘店」「藤が丘店」「藤が丘」）。長い名前から試すので「ナディアパーク栄店」は「栄店」より先に当たる。
+ * 英字の付いた店名（新宿西口Shinjuku Future Gallery店）は英字を除いた「新宿西口」でも当てる。1 文字の店（栄・原）は「栄店」のように店を付けたときだけ（「原則」「栄える」で誤爆しないため）
+ */
+function matchStore(text, stores) {
+  const s = String(text || '').replace(/[\s　]+/g, '');
+  if (!s) return null;
+  const cands = [];
+  for (const st of stores || []) {
+    const short = String(st.name || '').replace(/^セルフカフェ/, '').replace(/[\s　]+/g, '').replace(/店$/, '');
+    const jp = short.replace(/[A-Za-z0-9&＆・\-－]+$/, '').replace(/^[A-Za-z0-9&＆・\-－]+/, '');
+    for (const a of new Set([short, jp])) {
+      if (!a) continue;
+      cands.push({ st, key: a.length >= 2 ? a : `${a}店` });
+    }
+  }
+  cands.sort((a, b) => b.key.length - a.key.length);
+  const hit = cands.find((c) => s.includes(c.key));
+  return hit ? hit.st : null;
 }
 
 function toTokens(html) {
@@ -210,6 +245,20 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
     return parseStoreList(await getText(SHOP_LIST_URL));
   }
 
+  /**
+   * コメントなどの文に店名があればその店（{url,name,address}）。無ければ null。
+   * 一覧が読めなければ投げるが、直後の 5 分はもう読みに行かず null（サイトが落ちているときにコメントごとに 20 秒待たない）。一覧が 0 件なら作りが変わった合図なので warn
+   */
+  let namesFailedAt = 0;
+  async function findStore(text) {
+    if (now() - namesFailedAt < NAMES_FAIL_CACHE_MS) return null;
+    let html;
+    try { html = await getText(SHOP_LIST_URL); } catch (e) { namesFailedAt = now(); throw e; }
+    const stores = parseStoreNames(html);
+    if (!stores.length) console.warn('[threads] CAFE_STORE_NAMES_EMPTY 店舗一覧から店名が 1 つも読めない（ページの作りが変わった？）');
+    return matchStore(text, stores);
+  }
+
   async function storeFacts(url) {
     return parseStorePage(await getText(url), url);
   }
@@ -352,7 +401,7 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
     return { url, facts, storeName, photo: got[0] || null, ...(got.length >= 2 ? { photos: got } : {}), cycleDone };
   }
 
-  return { listStores, storeFacts, pickStore, pickPhoto, pendingAnnouncements, announcement, nextShop };
+  return { listStores, findStore, storeFacts, pickStore, pickPhoto, pendingAnnouncements, announcement, nextShop };
 }
 
-module.exports = { createCafeSite, parseStoreList, parseStorePage, factsText, parseNewsList, parseNewsEntry, parseMediaList, parseMediaEntry, MEDIA_URL, announcementDate, isAnnounceable, SHOP_LIST_URL, NEWS_URL, ANNOUNCE_CATEGORIES };
+module.exports = { createCafeSite, parseStoreList, parseStoreNames, matchStore, parseStorePage, factsText, parseNewsList, parseNewsEntry, parseMediaList, parseMediaEntry, MEDIA_URL, announcementDate, isAnnounceable, SHOP_LIST_URL, NEWS_URL, ANNOUNCE_CATEGORIES };

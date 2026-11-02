@@ -30,6 +30,7 @@ AI は写真を見て写っているものに合う文を書く（いつ・ど�
 - **毎朝 7:00〜7:09 の見回り**で `growth.daily`: フォロワー数（`/me/threads_insights?metric=followers_count`）と直近 7 日の投稿の数字（表示・いいね・返信・再投稿・引用）を Firestore に記録（`threads_metrics/<日付>`、`threads_posts.insights`）
 - **月曜**は `growth.weekly`: 直近 7 日を AI に見せて、型ごとの配分（`threads_config/strategy.weights`）と短い報告を作り、社長 DM へ。以後の投稿は `pickType` がその配分で型を選ぶ
 - **コメントへの返事は自動**（`THREADS_AUTO_REPLY=true`。`src/replies.js`）: 新しいコメントに人物像で 1〜2 文の返事を書いて投稿し、社長 DM に「コメント ↩ 返事」を並べて知らせる。営業・荒らし・意味不明は返事しない（AI が SKIP）
+  - 公式の返事の HP リンク（`personaCafe.GUIDE_LINKS`）の選び方（2026-11-02 社長。「ドリンク一杯いくらですか？」に よくある質問 を案内していた）: **全店にかかわる案内（ドリンクの値段など）→ トップ**／**特定の店 → その店のページ**（コメントに店名があれば店舗一覧 `cafeSite.findStore` で引く。無ければ投稿で紹介した店。どちらも無ければ店舗一覧）／**サブスク → サブスクのページ**／**使い方（入り方・ドリンクの買い方）→ 使い方ページ `/usage/`**。よくある質問にドリンクの値段は載っていないので値段の質問には使わない。投稿の末尾のリンク（`cafeTick.withLink`）も同じ分け方（使い方の話なら `/usage/`）
 - 権限 `threads_manage_insights`・`threads_manage_replies` が要る（`/oauth/start` で接続し直す。Meta のアプリ側でも権限を足す）
 - **他人の投稿へのコメント（検索して絡む）は未実装**: `/keyword_search` は Meta の App Review（審査）を通さないと自分の投稿しか検索できない（公式の記述）。審査は会社名での申請になる
 

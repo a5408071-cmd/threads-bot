@@ -387,7 +387,8 @@ describe('HP へ案内するときはリンクを付ける（2026-11-02 社長�
   });
 
   test('ふだんの回は「公式サイト」などで案内したときだけ。サブスクの話ならサブスクのページ、写真の店のページは付けない', async () => {
-    for (const [text, url] of [['詳しくは公式サイトのサブスクのページで！', 'https://selfcafe.jp/membership/'], ['気になる方は公式サイトをのぞいてみてください', 'https://selfcafe.jp/'], ['今日も集中できました', null]]) {
+    // 2026-11-02 社長「サブスクの時はサブスクのページ 使い方の時は使い方ページ 全体の案内の場合はTOPページ」
+    for (const [text, url] of [['詳しくは公式サイトのサブスクのページで！', 'https://selfcafe.jp/membership/'], ['気になる方は公式サイトをのぞいてみてください', 'https://selfcafe.jp/'], ['入り方は公式サイトの使い方のページにまとめています', 'https://selfcafe.jp/usage/'], ['今日も集中できました', null]]) {
       const d = deps({ now: at('11:20') });
       d.writer.writePost = jest.fn(async () => ({ ok: true, text, type: 'work', attempts: 1, tag: 'テレワーク' }));
       await d.store.setToken(TOKEN);

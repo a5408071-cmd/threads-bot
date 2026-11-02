@@ -1,4 +1,57 @@
-const { parseStoreList, parseStorePage, createCafeSite } = require('../src/cafeSite');
+const { parseStoreList, parseStoreNames, matchStore, parseStorePage, createCafeSite } = require('../src/cafeSite');
+
+const NAMED_LIST = `<li class="shop-listItem"><a href="https://selfcafe.jp/shop/aichi/hara/"><div class="shop-listItem_img"><img src="x.jpg" alt=""></div><p class="shop-listItem_name">セルフカフェ 原店</p><p class="shop-listItem_address">愛知県名古屋市天白区原１－２０７</p></a></li>
+<li class="shop-listItem"><a href="https://selfcafe.jp/shop/aichi/fujigaoka/"><div class="shop-listItem_img"><img src="y.jpg" alt=""></div><p class="shop-listItem_name">セルフカフェ 藤が丘店</p><p class="shop-listItem_address">愛知県名古屋市名東区明が丘１２５</p></a></li>
+<li class="shop-listItem"><a href="https://selfcafe.jp/shop/osaka/osaka-ekimae4-building/"><p class="shop-listItem_name">セルフカフェ 大阪駅前第4ビル店</p><p class="shop-listItem_address">大阪府大阪市北区</p></a></li>
+<li class="shop-listItem"><a href="https://selfcafe.jp/shop/aichi/sakae/"><p class="shop-listItem_name">セルフカフェ 栄店</p><p class="shop-listItem_address">愛知県名古屋市中区</p></a></li>
+<li class="shop-listItem"><a href="https://selfcafe.jp/shop/aichi/nadiapark/"><p class="shop-listItem_name">セルフカフェ ナディアパーク栄店</p><p class="shop-listItem_address">愛知県名古屋市中区</p></a></li>
+<li class="shop-listItem"><a href="https://selfcafe.jp/shop/tokyo/shinjukunishiguchi/"><p class="shop-listItem_name">セルフカフェ 新宿西口Shinjuku Future Gallery店</p><p class="shop-listItem_address">東京都新宿区</p></a></li>
+<a href="https://selfcafe.jp/about/">x</a>`;
+
+describe('店舗一覧の店名（コメントの店名から店のページを引く。2026-11-02 社長「特定の店舗の時は子ページのTOPを案内して」）', () => {
+  test('parseStoreNames: 店名・住所付き、店舗ページだけ', () => {
+    const got = parseStoreNames(NAMED_LIST);
+    expect(got).toHaveLength(6);
+    expect(got.slice(0, 3)).toEqual([
+      { url: 'https://selfcafe.jp/shop/aichi/hara/', name: 'セルフカフェ 原店', address: '愛知県名古屋市天白区原１－２０７' },
+      { url: 'https://selfcafe.jp/shop/aichi/fujigaoka/', name: 'セルフカフェ 藤が丘店', address: '愛知県名古屋市名東区明が丘１２５' },
+      { url: 'https://selfcafe.jp/shop/osaka/osaka-ekimae4-building/', name: 'セルフカフェ 大阪駅前第4ビル店', address: '大阪府大阪市北区' },
+    ]);
+  });
+  test('matchStore: 「藤が丘店」「藤が丘」「セルフカフェ 藤が丘店」のどれでも当たる。1 文字の店名（原・栄）は「原店」「栄店」のときだけ。長い名前が先。英字付きの店名は英字抜きでも。無ければ null', () => {
+    const stores = parseStoreNames(NAMED_LIST);
+    expect(matchStore('藤が丘店の営業時間は？', stores).url).toBe('https://selfcafe.jp/shop/aichi/fujigaoka/');
+    expect(matchStore('セルフカフェ 藤が丘店いいですね', stores).name).toBe('セルフカフェ 藤が丘店');
+    expect(matchStore('藤が丘って何時まで？', stores).url).toBe('https://selfcafe.jp/shop/aichi/fujigaoka/');
+    expect(matchStore('大阪駅前第4ビルは駐車場ありますか', stores).url).toBe('https://selfcafe.jp/shop/osaka/osaka-ekimae4-building/');
+    expect(matchStore('原則として朝は空いてますか', stores)).toBeNull();
+    expect(matchStore('原店は何時から？', stores).url).toBe('https://selfcafe.jp/shop/aichi/hara/');
+    expect(matchStore('栄店いきました', stores).url).toBe('https://selfcafe.jp/shop/aichi/sakae/');
+    expect(matchStore('ナディアパーク栄店いきました', stores).url).toBe('https://selfcafe.jp/shop/aichi/nadiapark/');
+    expect(matchStore('新宿西口って土日やってますか', stores).url).toBe('https://selfcafe.jp/shop/tokyo/shinjukunishiguchi/');
+    expect(matchStore('ドリンク一杯いくらですか？', stores)).toBeNull();
+    expect(matchStore('', stores)).toBeNull();
+  });
+  test('findStore: 店舗一覧を読んで当てる', async () => {
+    const http = { get: jest.fn(async () => ({ data: NAMED_LIST, headers: {} })) };
+    const site = createCafeSite({ http, rng: () => 0 });
+    expect((await site.findStore('藤が丘店は？')).url).toBe('https://selfcafe.jp/shop/aichi/fujigaoka/');
+    expect(await site.findStore('いいね')).toBeNull();
+    expect(http.get).toHaveBeenCalledTimes(1); // 一覧は覚える
+  });
+  test('findStore: 一覧が読めなければ投げ、その後 5 分は読みに行かず null', async () => {
+    let t = 1_000_000;
+    const http = { get: jest.fn(async () => { throw new Error('503'); }) };
+    const site = createCafeSite({ http, rng: () => 0, now: () => t });
+    await expect(site.findStore('藤が丘店')).rejects.toThrow('503');
+    t += 60 * 1000;
+    expect(await site.findStore('藤が丘店')).toBeNull();
+    expect(http.get).toHaveBeenCalledTimes(1);
+    t += 5 * 60 * 1000;
+    await expect(site.findStore('藤が丘店')).rejects.toThrow('503');
+    expect(http.get).toHaveBeenCalledTimes(2);
+  });
+});
 
 const LIST = `<a href="https://selfcafe.jp/shop/aichi/akatsuka/">赤塚</a><a href="https://selfcafe.jp/shop/aichi/anjoeki/">安城駅</a><a href="https://selfcafe.jp/shop/aichi/akatsuka/">dup</a><a href="https://selfcafe.jp/about/">x</a>`;
 const PAGE = `<div class="shop-header"><div class="shop-header_slide js-slide_shop">

@@ -189,6 +189,41 @@ describe('公式: 質問・答えにくいコメントは HP のリンクで案�
     expect(r.replied).toBe(1);
   });
 
+  test('案内先の選び方（値段はトップ・使い方は使い方ページ・faq に値段は無い）が prompt に入る（2026-11-02 社長）', async () => {
+    const { replies, anthropic, store } = mkGuide('ご質問ありがとうございます [LINK:top]');
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    await replies.poll({ token: 'tk', userId: 'u1' });
+    const prompt = anthropic.messages.create.mock.calls[0][0].messages[0].content;
+    expect(prompt).toMatch(/ドリンクの値段[^\n]*LINK:top/);
+    expect(prompt).toMatch(/使い方[^\n]*LINK:usage/);
+    expect(prompt).toMatch(/サブスク[^\n]*LINK:membership/);
+    expect(prompt).toMatch(/faq[^\n]*ドリンクの値段は載っていない/);
+  });
+
+  test('コメントに店名があれば、投稿が店の記事でなくても店舗一覧からその店のページを LINK:store に（2026-11-02 社長「特定の店舗の時は子ページのTOP」）', async () => {
+    const store = memoryStore({ now: () => NOW });
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    await store.savePost({ mediaId: 'm1', text: '集中できます', storeUrl: 'https://selfcafe.jp/shop/aichi/fujigaoka/', storeName: null });
+    const threads = { listMyPosts: jest.fn(async () => [P1]), listReplies: jest.fn(async () => [{ id: 'r1', text: '安城駅前店の営業時間は？', username: 'b' }]), publishReply: jest.fn(async () => ({ ok: true })) };
+    const anthropic = { messages: { create: jest.fn(async () => ({ content: [{ type: 'text', text: '店舗ページをご覧ください [LINK:store]' }] })) } };
+    const site = { findStore: jest.fn(async (t) => (/安城/.test(t) ? { url: 'https://selfcafe.jp/shop/aichi/anjoeki/', name: 'セルフカフェ 安城駅前店', address: '愛知県安城市' } : null)) };
+    await createReplies({ threads, store, notify: { owner: jest.fn(async () => ({ ok: true })) }, now: () => NOW, anthropic, env: { THREADS_AUTO_REPLY: 'true' }, guideLinks: LINKS, site }).poll({ token: 't', userId: 'u' });
+    expect(site.findStore).toHaveBeenCalledWith('安城駅前店の営業時間は？');
+    expect(anthropic.messages.create.mock.calls[0][0].messages[0].content).toMatch(/LINK:store: セルフカフェ 安城駅前店のページ/);
+    expect(threads.publishReply.mock.calls[0][0].text).toBe('店舗ページをご覧ください\nhttps://selfcafe.jp/shop/aichi/anjoeki/');
+  });
+
+  test('店舗一覧が読めなくても返事は止めない（店のページ無しで続ける）', async () => {
+    const store = memoryStore({ now: () => NOW });
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    const threads = { listMyPosts: jest.fn(async () => [P1]), listReplies: jest.fn(async () => [{ id: 'r1', text: '藤が丘店は？', username: 'b' }]), publishReply: jest.fn(async () => ({ ok: true })) };
+    const anthropic = { messages: { create: jest.fn(async () => ({ content: [{ type: 'text', text: 'こちらです [LINK:store]' }] })) } };
+    const site = { findStore: jest.fn(async () => { throw new Error('一覧が読めない'); }) };
+    const r = await createReplies({ threads, store, notify: { owner: jest.fn(async () => ({ ok: true })) }, now: () => NOW, anthropic, env: { THREADS_AUTO_REPLY: 'true' }, guideLinks: LINKS, site }).poll({ token: 't', userId: 'u' });
+    expect(r.replied).toBe(1);
+    expect(threads.publishReply.mock.calls[0][0].text).toBe('こちらです\nhttps://selfcafe.jp/');
+  });
+
   test('店のページが無い投稿で [LINK:store] を書いたらトップに落とす', async () => {
     const { replies, threads, store } = mkGuide('詳しくはこちら [LINK:store]');
     await store.setConfig('repliesInitialized', { at: 'x' });
