@@ -7,7 +7,7 @@
  */
 const { jstDateKey } = require('./slots');
 
-const DEFAULT_WEIGHTS = { question: 2, aruaru: 1, invite: 1, season: 1, small: 1, hook: 1, work: 2, fitness: 2, daily: 1, news: 1, countdown: 1, koyomi: 1, tips: 1 };
+const DEFAULT_WEIGHTS = { question: 2, aruaru: 1, invite: 1, season: 1, small: 1, hook: 1, work: 2, fitness: 2, daily: 1, news: 1, koyomi: 1, tips: 1 };
 const LOOKBACK_DAYS = 7;
 const WEEKLY_DAY = 1; // 月曜
 const DEFAULT_MODEL = 'claude-opus-5-5';
@@ -19,7 +19,7 @@ function createGrowth({ threads, store, notify, anthropic, env = process.env, no
   async function weightsFor() {
     try {
       const s = await store.getConfig('strategy');
-      if (s && s.weights && typeof s.weights === 'object') return { ...DEFAULT_WEIGHTS, ...s.weights };
+      if (s && s.weights && typeof s.weights === 'object') { const w = { ...DEFAULT_WEIGHTS }; for (const t of Object.keys(w)) if (t in s.weights) w[t] = s.weights[t]; return w; } // 廃止した型（countdown など）は持ち込まない
     } catch (e) { console.warn(`[threads] STRATEGY_READ_FAILED ${e.message}`); }
     return { ...DEFAULT_WEIGHTS };
   }
@@ -90,7 +90,7 @@ function createGrowth({ threads, store, notify, anthropic, env = process.env, no
     const prompt = [
       `あなたは Threads アカウントの運用を考える担当です。目標: 1 か月以内にフォロワー ${GOAL} 人（今 ${latest ?? '不明'} 人、この 7 日で ${delta == null ? '不明' : (delta >= 0 ? '+' : '') + delta} 人）。`,
       '直近 7 日の投稿の数字を見て、来週の投稿の型ごとの配分（weights）を決め、社長に送る短い報告（200 字以内。数字と「来週こうする」）を書いてください。',
-      `型: question（ゴルフの質問）, aruaru（ゴルフ・飲みのあるある）, invite（誘い）, season（季節）, small（道具・酒の小ネタ）, hook（問いかけで締める）, work（経営者の仕事）, fitness（マラソン・ジム）, daily（キラキラ日常）, news（時事）, countdown（試験・行事の残り日数）, koyomi（暦）, tips（継続・やる気のコツ）。今の配分: ${JSON.stringify(current)}`,
+      `型: question（ゴルフの質問）, aruaru（ゴルフ・飲みのあるある）, invite（誘い）, season（季節）, small（道具・酒の小ネタ）, hook（問いかけで締める）, work（経営者の仕事）, fitness（マラソン・ジム）, daily（キラキラ日常）, news（時事）, koyomi（暦）, tips（継続・やる気のコツ）。今の配分: ${JSON.stringify(current)}`,
       '判断のコツ: 返信が多い型はアルゴリズムに強いので増やす。表示が少ない型は減らす（0 にはしない。各型 0〜5 の整数で、合計 10〜20）。写真あり/なしの差、時間帯の差も見る。本数が少なくて判断できない型は今の値のまま。',
       '',
       summarize(posts, metrics),

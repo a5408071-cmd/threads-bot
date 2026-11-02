@@ -62,10 +62,18 @@ test('weightsFor: 保存した配分が無ければ既定', async () => {
   expect((await growth.weightsFor()).question).toBe(9);
 });
 
-test('weekly: AI の答えに無い型（後から足した countdown など）は 0 にせず今の重みのまま', async () => {
+test('weekly: AI の答えに無い型（後から足した koyomi など）は 0 にせず今の重みのまま', async () => {
   const { growth, store } = mk();
   await growth.weekly(TOKEN);
   const { weights } = await store.getConfig('strategy');
-  expect(weights).toMatchObject({ countdown: DEFAULT_WEIGHTS.countdown, koyomi: DEFAULT_WEIGHTS.koyomi, tips: DEFAULT_WEIGHTS.tips });
-  expect(DEFAULT_WEIGHTS.countdown).toBeGreaterThan(0);
+  expect(weights).toMatchObject({ koyomi: DEFAULT_WEIGHTS.koyomi, tips: DEFAULT_WEIGHTS.tips });
+  expect(DEFAULT_WEIGHTS.koyomi).toBeGreaterThan(0);
+});
+
+test('趣味アカウントの配分に countdown は無い（2026-11-02 廃止。前に保存した配分に残っていても週次で落ちる）', async () => {
+  expect(DEFAULT_WEIGHTS).not.toHaveProperty('countdown');
+  const { growth, store } = mk();
+  await store.setConfig('strategy', { weights: { countdown: 3 } });
+  await growth.weekly(TOKEN);
+  expect((await store.getConfig('strategy')).weights).not.toHaveProperty('countdown');
 });

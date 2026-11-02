@@ -280,18 +280,30 @@ test('pickType は weights（型ごとの重み）を渡せる。重み 0 の型
 });
 
 describe('試験・暦・継続のコツ（2026-10-29 社長「簿記とか国家試験、センター試験などの話題も 残り何日とか 暦の話もいいね 継続することの難しさややる気を出すコツ へえーってなるといいね」）', () => {
-  test('型に countdown・koyomi・tips があり、どれもウェブ検索で確かめる', async () => {
-    expect(TYPES).toEqual(expect.arrayContaining(['countdown', 'koyomi', 'tips']));
-    for (const type of ['countdown', 'koyomi', 'tips']) {
-      const a = fakeAnthropic([`${LONG}\nタグ: 習慣化`]);
+  test('趣味アカウントの型に countdown は無い（2026-11-02 社長「資格の話をセルフカフェの方へ ゴルフの方は廃止」）。koyomi・tips はウェブ検索で確かめる', async () => {
+    expect(TYPES).not.toContain('countdown');
+    expect(TYPES).toEqual(expect.arrayContaining(['koyomi', 'tips']));
+    expect(require('../src/persona').TYPE_GUIDE.countdown).toBeUndefined();
+    expect(String(require('../src/persona').SYSTEM)).not.toMatch(/簿記|宅建|共通テスト|資格/);
+    for (const type of ['koyomi', 'tips']) {
+      const a = fakeAnthropic([`${LONG}
+タグ: 習慣化`]);
       await writePost({ type, recent: [], dateKey: '2026-10-29', env: {}, anthropic: a });
       expect(a.messages.create.mock.calls[0][0].tools).toEqual([expect.objectContaining({ type: 'web_search_20260209' })]);
     }
   });
 
+  test('countdown はセルフカフェ公式の型で、ウェブ検索で確かめる', async () => {
+    expect(require('../src/personaCafe').TYPES).toContain('countdown');
+    const a = fakeAnthropic([`${LONG}
+タグ: 資格勉強`]);
+    await writePost({ type: 'countdown', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a, persona: require('../src/personaCafe') });
+    expect(a.messages.create.mock.calls[0][0].tools).toEqual([expect.objectContaining({ type: 'web_search_20260209' })]);
+  });
+
   test('{N} は「日付:」の行の日までの日数に置き換え、日付の行は本文から外す', async () => {
     const a = fakeAnthropic([`${LONG}\n日商簿記の試験まで残り{N}日！\n日付: 2026-11-15\nタグ: 簿記`]);
-    const r = await writePost({ type: 'countdown', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a });
+    const r = await writePost({ type: 'countdown', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a, persona: require('../src/personaCafe') });
     expect(r.ok).toBe(true);
     expect(r.text).toContain('残り17日');
     expect(r.text).not.toMatch(/\{N\}|日付:/);
@@ -300,7 +312,7 @@ describe('試験・暦・継続のコツ（2026-10-29 社長「簿記とか国�
 
   test('{N} があるのに日付が無い・過去の日付なら書き直し', async () => {
     const a = fakeAnthropic([`${LONG}\n残り{N}日`, `${LONG}\n残り{N}日\n日付: 2026-10-01`, LONG]);
-    const r = await writePost({ type: 'countdown', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a });
+    const r = await writePost({ type: 'countdown', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a, persona: require('../src/personaCafe') });
     expect(r).toMatchObject({ ok: true, attempts: 3 });
     const third = JSON.stringify(a.messages.create.mock.calls[2][0].messages);
     expect(third).toMatch(/日付/);
@@ -308,15 +320,19 @@ describe('試験・暦・継続のコツ（2026-10-29 社長「簿記とか国�
 
   test('残り日数を数字で直接書いたら書き直し（数え間違いを防ぐ）', async () => {
     const a = fakeAnthropic([`${LONG}\n共通テストまであと80日`, LONG]);
-    const r = await writePost({ type: 'countdown', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a });
+    const r = await writePost({ type: 'countdown', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a, persona: require('../src/personaCafe') });
     expect(r).toMatchObject({ ok: true, attempts: 2 });
   });
 
-  test('system に簿記・共通テスト・暦・継続のコツが入る', async () => {
+  test('system に暦・継続のコツが入る（簿記・共通テストはセルフカフェ公式の方）', async () => {
     const a = fakeAnthropic([LONG]);
     await writePost({ type: 'tips', recent: [], dateKey: '2026-10-29', env: {}, anthropic: a });
     const sys = String(a.messages.create.mock.calls[0][0].system);
-    for (const w of ['簿記', '共通テスト', '二十四節気', '継続']) expect(sys).toContain(w);
+    for (const w of ['二十四節気', '継続']) expect(sys).toContain(w);
+    const c = fakeAnthropic([LONG]);
+    await writePost({ type: 'tips', recent: [], dateKey: '2026-10-29', env: {}, anthropic: c, persona: require('../src/personaCafe') });
+    const csys = String(c.messages.create.mock.calls[0][0].system);
+    for (const w of ['簿記', '共通テスト']) expect(csys).toContain(w);
   });
 });
 

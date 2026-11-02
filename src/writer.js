@@ -4,10 +4,10 @@
  */
 const persona = require('./persona');
 
-const TYPES = ['question', 'aruaru', 'invite', 'season', 'small', 'hook', 'work', 'fitness', 'daily', 'news', 'countdown', 'koyomi', 'tips'];
+const TYPES = ['question', 'aruaru', 'invite', 'season', 'small', 'hook', 'work', 'fitness', 'daily', 'news', 'koyomi', 'tips']; // countdown はセルフカフェ公式だけ（2026-11-02 趣味アカウントは廃止）
 const NON_GOLF = ['work', 'fitness', 'daily', 'news']; // ゴルフ以外（2026-10-28 社長「ゴルフ以外も」「経営者らしく」「マラソン・ジム」）。重みを 2 倍にして半分くらい
 // ウェブ検索で事実を確かめてから書く型（2026-10-29 社長「試験の残り何日」「暦」「継続のコツ へえーってなる」を追加）
-const SEARCH_TYPES = ['news', 'countdown', 'koyomi', 'tips', 'quote']; // quote（偉人の名言）は公式アカウントだけの型
+const SEARCH_TYPES = ['news', 'countdown', 'koyomi', 'tips', 'quote']; // countdown・quote（偉人の名言）は公式アカウントだけの型
 const COUNTDOWN_MAX_DAYS = 400;
 const WEB_SEARCH_TOOL = { type: 'web_search_20260209', name: 'web_search', max_uses: 3 };
 const MAX_CONTINUES = 3; // pause_turn（検索の続き）の上限
