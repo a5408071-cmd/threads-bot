@@ -251,6 +251,8 @@ test('名言の回は 1 行目で「名言」を紹介する（「名言編」�
   const { quoteCheck } = require('../src/cafeTick');
   expect(quoteCheck('今日紹介したい名言です📝\n「小さいことを…」').ok).toBe(true);
   expect(quoteCheck('明日から頑張れる名言をひとつ\n「小さいことを…」').ok).toBe(true);
+  expect(quoteCheck('「名言は人を動かす」。誰か\n解説').ok).toBe(false); // 1 行目から名言本文
+  expect(quoteCheck('明日から一歩ずつ前に進めるような名言をひとつどうぞ👨‍👩‍👧\n「…」').ok).toBe(true); // 絵文字を長く数えない
   expect(quoteCheck('今日は名言編です📝\n「小さいことを…」').ok).toBe(false);
   expect(quoteCheck('「小さいことを…」。イチロー選手の言葉です').ok).toBe(false);
   expect(quoteCheck('今日紹介したい名言です\nセルフカフェ栄店で').ok).toBe(false); // 店名の検査も続けて掛かる

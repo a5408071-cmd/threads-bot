@@ -34,7 +34,7 @@ const GENERIC_STATION_RE = /(最寄り?|主要|ターミナル|各|近く|大き
 // 名言の回は 1 行目で名言を紹介してから（2026-10-29 社長「名言急に言い出すと変なので…」→ 2026-11-02「今日は名言編ですはちょっと変だな 今日の紹介したい名言、明日から頑張れる名言みたいな紹介文にして」）
 function quoteCheck(text) {
   const first = String(text || '').trim().split('\n')[0];
-  if (/名言編/.test(first) || !/名言/.test(first) || first.length > 30) return { ok: false, reason: '名言の回は 1 行目を「今日紹介したい名言です」「明日から頑張れる名言をひとつ」のような短い紹介文にする（「名言編」は使わない）' };
+  if (/名言編/.test(first) || !/名言/.test(first) || /^[「『]/.test(first) || [...first].length > 30) return { ok: false, reason: '名言の回は 1 行目を「今日紹介したい名言です」「明日から頑張れる名言をひとつ」のような短い紹介文にする（「名言編」は使わない）' };
   return noStoreCheck(text);
 }
 
