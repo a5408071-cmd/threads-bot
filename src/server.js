@@ -2,7 +2,7 @@
  * threads-bot の HTTP 入口。
  *   GET  /health         … 生存確認
  *   GET  /cron/tick      … 10分おきの見回り（X-Cron-Key か ?key=）。?dry=1 は文を返すだけ、?test=1 は文を社長DMへ（投稿しない）
- *   POST /api/post       … イソからの投稿（X-Cron-Key。JSON {text, imageUrl?, topicTag?, linkUrl?, source?, preview?, force?}）
+ *   POST /api/post       … イソからの投稿（X-Cron-Key。JSON {text, imageUrl?, topicTag?, linkUrl?, at?（JST 予約）, replyText?（予約の返信）, source?, preview?, force?}）
  *   GET  /admin/status   … 今日の枠・トークンの残り日数・直近の投稿（鍵そのものは返さない）
  *   GET  /oauth/start    … 社長が新垢でログインしたブラウザで開く（?key=）→ Threads の許可画面へ
  *   GET  /oauth/callback … Threads から戻る。code をトークンに換えて Firestore に保存
@@ -119,6 +119,13 @@ function createApp(deps = {}) {
       }
       const tick = deps.tick || require('./tick');
       const r = await tick.runTick({ env, store: getStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: getNotify(), anthropic: getAnthropic(), now, mode, replies: getReplies(), photos: getPhotos(), stock: getStock(), growth: getGrowth(), forcePhoto: req.query.photo === '1', forcePost: mode === 'live' && req.query.post === '1', forceType: (mode !== 'live' || req.query.post === '1') && req.query.type ? String(req.query.type) : null });
+      // 予約投稿（趣味用）。時刻を過ぎたものを出す
+      if (mode === 'live' && !(req.query.post === '1')) {
+        try {
+          r.scheduled = await require('./scheduled').runDue({ store: getStore(), threads: getThreads(), now });
+          if (r.scheduled.errors.length) r.errors = [...(r.errors || []), ...r.scheduled.errors];
+        } catch (e) { r.errors = [...(r.errors || []), `予約投稿: ${e.message}`]; }
+      }
       // 趣味用のあとに公式も回す（公式が落ちても趣味用の結果は返す）
       if (mode === 'live' && !(req.query.post === '1')) {
         try { r.cafe = await runCafe('live'); } catch (e) { r.cafe = { ok: false, errors: [`【公式】${e.message}`] }; }
@@ -159,6 +166,20 @@ function createApp(deps = {}) {
       const squash = (s) => String(s).toLowerCase().replace(/\s+/g, '');
       const words = banned.filter((w) => squash(text).includes(squash(w)));
       return res.status(400).json({ ok: false, blocked: true, reason: check.reason, words });
+    }
+    if (body.at) {
+      // 予約投稿（JST）。時刻に /cron/tick が出す（src/scheduled.js）
+      const scheduled = require('./scheduled');
+      const at = String(body.at).trim();
+      if (Number.isNaN(scheduled.atMs(at))) return res.status(400).json({ ok: false, error: 'at は JST の YYYY-MM-DDTHH:mm で' });
+      if (scheduled.atMs(at) <= now().getTime()) return res.status(400).json({ ok: false, error: 'at が過ぎています' });
+      const replyText = body.replyText ? String(body.replyText).trim() : null;
+      // 返信文にも NG 語を掛ける（リンクは返信に置く前提なので URL の部分は外して見る）
+      const rc = replyText ? writer.checkText(replyText.replace(/https:\/\/\S+/g, ''), { banned }) : { ok: true };
+      if (!rc.ok && !force) return res.status(400).json({ ok: false, blocked: true, reason: `返信: ${rc.reason}` });
+      const item = await scheduled.add(getStore(), { at, text, topicTag, linkUrl: imageUrl ? null : linkUrl, replyText, source });
+      console.log(`[threads] API_SCHEDULED at=${at} id=${item.id}`);
+      return res.json({ ok: true, scheduled: true, at, id: item.id });
     }
     try {
       const store = getStore();

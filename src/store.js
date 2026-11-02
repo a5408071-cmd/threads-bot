@@ -16,6 +16,7 @@ const C = {
   alerts: 'threads_alerts',
   photos: 'threads_photos',
   metrics: 'threads_metrics',
+  scheduled: 'threads_scheduled', // 予約投稿（1件1文書。src/scheduled.js）
 };
 
 function createStore(db, { now = () => new Date(), prefix = 'threads_' } = {}) {
@@ -188,7 +189,25 @@ function createStore(db, { now = () => new Date(), prefix = 'threads_' } = {}) {
     });
   }
 
-  return { getDay, ensureDay, addSlots, claimSlot, releaseSlot, markPosted, markSkipped, savePost, recentPosts, getToken, setToken, getConfig, setConfig, seenReply, markReplySeen, alertDue, setOauthState, takeOauthState, photoUsedRecently, markPhotoUsed, photoLastUsed, updatePost, setMetric, getMetric, listMetrics };
+  // ── 予約投稿 ──
+  async function addScheduled(item) { await col(C.scheduled).doc(item.id).set(item); return item; }
+  async function listScheduled() { return (await col(C.scheduled).get()).docs.map((d) => d.data()); }
+  async function updateScheduled(id, patch) { await col(C.scheduled).doc(id).update(patch); }
+  /** 投稿する権利を取る。終わっている・他が持っている（staleMs 以内）なら false。取れたら claimedAt を書いて true */
+  async function claimScheduled(id, nowIso, staleMs) {
+    const ref = col(C.scheduled).doc(id);
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return false;
+      const d = snap.data();
+      if (d.doneAt) return false;
+      if (d.claimedAt && Date.parse(nowIso) - Date.parse(d.claimedAt) < staleMs) return false;
+      tx.update(ref, { claimedAt: nowIso });
+      return true;
+    });
+  }
+
+  return { addScheduled, listScheduled, updateScheduled, claimScheduled, getDay, ensureDay, addSlots, claimSlot, releaseSlot, markPosted, markSkipped, savePost, recentPosts, getToken, setToken, getConfig, setConfig, seenReply, markReplySeen, alertDue, setOauthState, takeOauthState, photoUsedRecently, markPhotoUsed, photoLastUsed, updatePost, setMetric, getMetric, listMetrics };
 }
 
 /** Firestore の使う部分だけを Map で真似る（テスト用）。createStore に渡すので本番と同じ経路を通る */
