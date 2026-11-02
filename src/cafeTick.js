@@ -41,17 +41,41 @@ function noStoreCheck(text) {
   const m = s.match(STORE_NAME_RE) || [...s.matchAll(STATION_RE)].find((x) => x[0].startsWith('「') || !GENERIC_STATION_RE.test(x[0]));
   return m ? { ok: false, reason: `ふだんの回なのに店名・駅名（${m[0]}）が入っている。特定の店・駅・地名は書かず全店共通の話にする` } : { ok: true };
 }
+// HP へ案内するときのリンク（2026-11-02 社長「HP案内するときはリンク付けてあげるとより丁寧 その店舗のページね」）。
+// 告知は店のページ（無ければ記事）、ふだんの回は本文で公式サイトに触れたときだけ。写真に使った店のページは付けない（話と関係ない）
+const HP_MENTION_RE = /公式サイト|公式ホームページ|ホームページ|公式HP|HP|公式ページ/;
+const POST_MAX = 500;
+function withLink(w) {
+  if (!w || !w.ok || w.linkUrl) return w; // メディア掲載はリンクのカードが付く
+  const G = personaCafe.GUIDE_LINKS;
+  let line = null;
+  if (w.type === 'newstore' && (w.storeUrl || w.announceUrl)) line = `▶ 店舗ページ ${w.storeUrl || w.announceUrl}`;
+  else if (w.type === 'campaign' && (w.announceUrl || w.storeUrl)) line = `▶ 詳しくはこちら ${w.announceUrl || w.storeUrl}`;
+  else if (HP_MENTION_RE.test(w.text)) line = (w.type === 'membership' || /サブスク|会員|月額/.test(w.text)) ? `▶ サブスクの詳細 ${G.membership.url}` : `▶ 公式サイト ${G.top.url}`;
+  if (!line) return w;
+  const text = `${w.text.replace(/\s+$/, '')}\n\n${line}`;
+  return text.length > POST_MAX ? w : { ...w, text };
+}
+// 付けたリンクの行は次の投稿を書くときに AI へ見せない（真似して URL を書くと書き直しになる）
+const stripLink = (t) => String(t || '').replace(/\n*▶ [^\n]*https?:\/\/\S+\s*$/, '');
+
 const GENERAL_FACTS = '今回は特定の店を紹介しない回です。店名・駅名・地名・エリア名は書かない。個室ブース・会議室・会員専用エリア・コピー機は店によって無いので書かない。全店共通の事実（ドリンク 1 杯で時間無制限・Wi-Fi・電源・無人・月額のサブスク）の範囲で書く。写真から店名や場所を書かない。';
 
-function pickCafeType(recentTypes, rng = Math.random) {
+// 配分（weights）は毎日の見直し（cafeLearning）が決める。無ければ今までどおり均等＋仕事・勉強 2 倍
+function pickCafeType(recentTypes, rng = Math.random, weights = null) {
   const avoid = new Set((recentTypes || []).slice(0, 2));
+  if (weights && typeof weights === 'object') {
+    const bag = (skip) => personaCafe.TYPES.filter((t) => !skip.has(t)).flatMap((t) => Array(Math.max(0, Math.round(Number(weights[t]) || 0))).fill(t));
+    const pool = bag(avoid).length ? bag(avoid) : bag(new Set());
+    if (pool.length) return pool[Math.floor(rng() * pool.length)];
+  }
   let pool = personaCafe.TYPES.filter((t) => !avoid.has(t));
   if (!pool.length) pool = personaCafe.TYPES.slice();
   pool = [...pool, ...pool.filter((t) => t === 'work' || t === 'study')]; // 仕事・勉強での使い方を 2 倍
   return pool[Math.floor(rng() * pool.length)];
 }
 
-async function runCafeTick({ env = process.env, store, threads, writer, notify, anthropic, site, now = () => new Date(), mode = 'live', replies = null, growth = null, forcePost = false, forceType = null, draw = null }) {
+async function runCafeTick({ env = process.env, store, threads, writer, notify, anthropic, site, now = () => new Date(), mode = 'live', replies = null, growth = null, learning = null, forcePost = false, forceType = null, draw = null }) {
   const t = now();
   const dateKey = slots.jstDateKey(t);
   const out = { ok: true, account: 'cafe', mode, dateKey, slots: null, due: null, posted: [], skipped: [], preview: null, token: null, replies: null, errors: [] };
@@ -132,8 +156,17 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     await store.setConfig('announced', { urls: cur });
   };
 
-  const compose = async () => {
-    const recent = await store.recentPosts(RECENT_POSTS);
+  const compose = async () => withLink(await composeBody());
+  const composeBody = async () => {
+    const recent = (await store.recentPosts(RECENT_POSTS)).map((p) => ({ ...p, text: stripLink(p.text) }));
+    // 毎日の見直しのメモと配分（無ければ今までどおり）
+    let notes = '';
+    let weights = null;
+    if (learning) {
+      try { notes = await learning.notesText(); } catch (e) { console.warn(`[threads] CAFE_NOTES_FAILED ${e.message}`); }
+      try { weights = await learning.weightsFor(); } catch (e) { console.warn(`[threads] CAFE_WEIGHTS_FAILED ${e.message}`); }
+    }
+    const withNotes = (f) => (notes ? `${f}\n\n${notes}` : f);
     const wantAnnounce = !forceType || personaCafe.ANNOUNCE_TYPES.includes(forceType);
     let a = null;
     if (wantAnnounce) {
@@ -151,12 +184,12 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
         ...(type === 'newstore' && (announcementDate(a.item) || '9999') < dateKey ? [`- この店は ${announcementDate(a.item)} にすでにオープンしている（今日は ${dateKey}）。「オープンします」「OPEN 予定」のような予定の書き方はせず、もう使える店として紹介する。`] : []),
         `- 本文:\n${a.text}`,
         `この記事の告知は ${a.round || 1} 回目（全 ${total} 回）。${(a.round || 1) > 1 ? ((a.previous || []).length ? '前回までの告知文と、書き出し・切り口・取り上げる事実の順番・使い方の例・締めを変える（同じ文・同じ言い回しは使わない）:' : '前回の告知とは書き出し・切り口・使い方の例を変える（前回の文は残っていない）。') : '1 回目なので、何がいつどこで始まるかを分かりやすく。'}`,
-        ...(a.previous || []).map((p, k) => `  前回${k + 1}: ${String(p).replace(/\n/g, ' ')}`),
+        ...(a.previous || []).map((p, k) => `  前回${k + 1}: ${stripLink(p).replace(/\n/g, ' ')}`),
       ].join('\n');
-      const w = await writer.writePost({ type, recent: [...(a.previous || []), ...recent.map((p) => p.text)], dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts, banned: CAFE_BANNED });
+      const w = await writer.writePost({ type, recent: [...(a.previous || []).map(stripLink), ...recent.map((p) => p.text)], dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED });
       return { ...w, photo: a.photo, ...(a.photos && a.photos.length >= 2 ? { photos: a.photos } : {}), storeUrl: a.shopUrl, storeName: a.storeName, announceUrl: a.item.url, ...(a.linkUrl ? { linkUrl: a.linkUrl } : {}) };
     }
-    const type = forceType || pickCafeType(recent.map((p) => p.type));
+    const type = forceType || pickCafeType(recent.map((p) => p.type), Math.random, weights);
     const picked = await site.pickPhoto({ recentUrls: recent.map((p) => p.storeUrl).filter(Boolean) });
     let facts = GENERAL_FACTS;
     if (type === 'quote') {
@@ -164,7 +197,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
       const used = ((await store.getConfig('quotes')) || {}).used || [];
       facts += `\n名言は日本・海外の偉人、経営者・科学者・発明家・作家・スポーツ選手など幅広く選ぶ（孔子・老子のような定番ばかりにしない）。${used.length ? `\nこれまでに使った名言（同じ言葉は使わない。同じ人も直近 10 個に入っていれば避ける）:\n${used.slice(-QUOTES_IN_PROMPT).map((q) => `- ${q}`).join('\n')}` : ''}`;
     }
-    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts, banned: CAFE_BANNED, check: type === 'quote' ? quoteCheck : noStoreCheck });
+    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: type === 'quote' ? quoteCheck : noStoreCheck });
     return { ...w, photo: picked.photo, storeUrl: picked.url, storeName: null };
   };
 
@@ -243,6 +276,13 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     if (hm >= '07:00' && hm < '07:10') {
       out.growth = {};
       try { out.growth.daily = await growth.daily(token); } catch (e) { fail(`数字の記録でエラー: ${e.message}`); }
+    }
+  }
+  // 毎日の見直し（数字の記録のあと。2026-11-02 社長「伸ばす投稿を日々ブラッシュアップしていきたい」）
+  if (learning && !noToken && mode === 'live') {
+    const hm = slots.jstHm(t);
+    if (hm >= '07:00' && hm < '07:10') {
+      try { out.learning = await learning.daily(); } catch (e) { fail(`見直しでエラー: ${e.message}`); }
     }
   }
 

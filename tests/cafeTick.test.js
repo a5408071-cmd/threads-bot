@@ -343,3 +343,65 @@ describe('公式の数字（2026-11-02 社長「セルフカフェの方イン�
     expect(r.errors.join()).toMatch(/数字の記録.*boom/);
   });
 });
+
+describe('毎日の見直しを投稿に効かせる（2026-11-02）', () => {
+  test('数字の記録のあとに見直し（learning.daily）を走らせる。記録に失敗しても見直しは走る', async () => {
+    const d = deps({ now: at('07:05') });
+    await d.store.setToken(TOKEN);
+    const learning = { daily: jest.fn(async () => ({ ok: true })), notesText: jest.fn(async () => ''), weightsFor: jest.fn(async () => null) };
+    const growth = { daily: jest.fn(async () => { throw new Error('x'); }) };
+    const r = await runCafeTick({ ...d, growth, learning, draw: () => ({ slots: ['11:17'] }) });
+    expect(learning.daily).toHaveBeenCalled();
+    expect(r.learning).toEqual({ ok: true });
+  });
+
+  test('メモは投稿を書くときの指示（facts）に入り、配分は型の選び方に使う', async () => {
+    const d = deps({ now: at('11:20') });
+    await d.store.setToken(TOKEN);
+    const learning = { daily: jest.fn(), notesText: jest.fn(async () => 'これまでの数字から分かった…\n- 1 行目に問いかけ'), weightsFor: jest.fn(async () => ({ howto: 5 })) };
+    await runCafeTick({ ...d, learning });
+    const call = d.writer.writePost.mock.calls[0][0];
+    expect(call.facts).toMatch(/1 行目に問いかけ/);
+    expect(call.type).toBe('howto');
+  });
+
+  test('pickCafeType: 配分があればそれで選ぶ（直近 2 本は避ける。全部避けたら配分のまま）', () => {
+    const seen = new Set();
+    for (let i = 0; i < 300; i++) seen.add(pickCafeType(['work'], Math.random, { work: 5, study: 1, quote: 0 }));
+    expect([...seen]).toEqual(['study']);
+    expect(pickCafeType(['work', 'study'], Math.random, { work: 5, study: 1 })).toMatch(/work|study/);
+  });
+});
+
+describe('HP へ案内するときはリンクを付ける（2026-11-02 社長「HP案内するときはリンク付けてあげるとより丁寧 その店舗のページね」）', () => {
+  test('新店の告知は最後にその店のページの URL を付ける', async () => {
+    const d = deps({ now: at('11:20'), news: [NEWS_ITEM] });
+    d.writer.writePost = jest.fn(async () => ({ ok: true, text: 'イオンタウン大垣店がオープンします！', type: 'newstore', attempts: 1, tag: '大垣カフェ' }));
+    await d.store.setToken(TOKEN);
+    await runCafeTick(d);
+    const text = d.threads.publishPost.mock.calls[0][0].text;
+    expect(text).toMatch(/イオンタウン大垣店がオープンします！\n+.*https:\/\/selfcafe\.jp\/shop\/gifu\/aeontown-ogaki\/$/);
+  });
+
+  test('ふだんの回は「公式サイト」などで案内したときだけ。サブスクの話ならサブスクのページ、写真の店のページは付けない', async () => {
+    for (const [text, url] of [['詳しくは公式サイトのサブスクのページで！', 'https://selfcafe.jp/membership/'], ['気になる方は公式サイトをのぞいてみてください', 'https://selfcafe.jp/'], ['今日も集中できました', null]]) {
+      const d = deps({ now: at('11:20') });
+      d.writer.writePost = jest.fn(async () => ({ ok: true, text, type: 'work', attempts: 1, tag: 'テレワーク' }));
+      await d.store.setToken(TOKEN);
+      await runCafeTick(d);
+      const sent = d.threads.publishPost.mock.calls[0][0].text;
+      if (url) expect(sent).toMatch(new RegExp(`\n.*${url.replace(/[./]/g, '\$&')}$`));
+      else expect(sent).toBe(text);
+      expect(sent).not.toMatch(/fujigaoka/);
+    }
+  });
+
+  test('付けると 500 字を超えるなら付けない', async () => {
+    const long = `${'あ'.repeat(490)}公式サイトで`;
+    const d = deps({ now: at('11:20') });
+    d.writer.writePost = jest.fn(async () => ({ ok: true, text: long, type: 'work', attempts: 1 }));
+    await d.store.setToken(TOKEN);
+    await runCafeTick(d);
+    expect(d.threads.publishPost.mock.calls[0][0].text).toBe(long);
+  });
+});

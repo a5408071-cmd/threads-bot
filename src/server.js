@@ -84,7 +84,13 @@ function createApp(deps = {}) {
     if (cafeGrowth === null && deps.cafeGrowth === undefined) cafeGrowth = require('./growth').createGrowth({ threads: getThreads(), store: getCafeStore(), notify: cafeNotify, anthropic: getAnthropic(), env, now });
     return cafeGrowth;
   };
-  const runCafe = (mode, extra = {}) => (deps.cafeTick || require('./cafeTick')).runCafeTick({ env, store: getCafeStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: cafeNotify, anthropic: getAnthropic(), site: getCafeSite(), now, mode, replies: getCafeReplies(), growth: getCafeGrowth(), ...extra });
+  // 公式の毎日の見直し（2026-11-02 社長「伸ばす投稿を日々ブラッシュアップしていきたい」）
+  let cafeLearning = deps.cafeLearning === undefined ? null : deps.cafeLearning;
+  const getCafeLearning = () => {
+    if (cafeLearning === null && deps.cafeLearning === undefined) cafeLearning = require('./cafeLearning').createCafeLearning({ store: getCafeStore(), anthropic: getAnthropic(), notify: cafeNotify, env, now });
+    return cafeLearning;
+  };
+  const runCafe = (mode, extra = {}) => (deps.cafeTick || require('./cafeTick')).runCafeTick({ env, store: getCafeStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: cafeNotify, anthropic: getAnthropic(), site: getCafeSite(), now, mode, replies: getCafeReplies(), growth: getCafeGrowth(), learning: getCafeLearning(), ...extra });
   const storeFor = (account) => (account === 'cafe' ? getCafeStore() : getStore());
   const redirectUri = () => `${String(env.PUBLIC_BASE_URL || '').replace(/\/+$/, '')}/oauth/callback`;
   const app = express();

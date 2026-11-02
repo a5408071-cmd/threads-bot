@@ -100,7 +100,8 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
         if (!r || !r.id) continue;
         if (r.is_reply_owned_by_me || (r.from && String(r.from.id) === String(userId))) continue; // 自分の返信
         if (await store.seenReply(r.id)) continue;
-        { const m = mine.get(p.id) || {}; fresh.push({ ...r, post: { ...p, text: m.text || '', storeUrl: m.storeUrl, storeName: m.storeName } }); }
+        // ふだんの回の storeUrl は写真の店（話と関係ない）なので渡さない
+        { const m = mine.get(p.id) || {}; fresh.push({ ...r, post: { ...p, text: m.text || '', storeUrl: m.storeName ? m.storeUrl : undefined, storeName: m.storeName } }); }
       }
     }
     out.newReplies = fresh.length;

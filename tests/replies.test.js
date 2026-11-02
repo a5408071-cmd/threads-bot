@@ -230,4 +230,8 @@ describe('公式: リンクの後始末（レビュー指摘）', () => {
     const t = await run('ありがとうございます [LINK:store]', (s) => s.savePost({ mediaId: 'm1', text: '安城', storeUrl: 'https://selfcafe.jp/shop/aichi/anjoeki/', storeName: '安城駅前店' }));
     expect(t).toBe('ありがとうございます\nhttps://selfcafe.jp/shop/aichi/anjoeki/');
   });
+  test('ふだんの回（店名なし。storeUrl は写真の店）では店のページを付けず、トップに落とす', async () => {
+    const t = await run('ありがとうございます [LINK:store]', (s) => s.savePost({ mediaId: 'm1', text: '集中できます', storeUrl: 'https://selfcafe.jp/shop/aichi/fujigaoka/', storeName: null }));
+    expect(t).toBe('ありがとうございます\nhttps://selfcafe.jp/');
+  });
 });
