@@ -190,6 +190,36 @@ describe('既存店の紹介（2026-11-02 社長「新店舗終わったら既�
     const r = await createCafeSite({ http: http() }).nextShop({ done: [], skip: ['https://selfcafe.jp/shop/aichi/akatsuka/'] });
     expect(r.url).toBe('https://selfcafe.jp/shop/aichi/anjoeki/');
   });
+  // 2026-11-02 社長「なるべく新しい順に出していこう 認知低いところを先にいきたい」
+  const withApi = (news = '') => {
+    const h = http();
+    const orig = h.get.getMockImplementation();
+    h.get.mockImplementation(async (url, o) => {
+      if (url.startsWith('https://selfcafe.jp/wp-json/wp/v2/shop')) return { data: JSON.stringify([
+        { link: 'https://selfcafe.jp/shop/aichi/anjoeki/', date: '2026-10-02T18:31:11' },
+        { link: 'https://selfcafe.jp/shop/aichi/akatsuka/', date: '2024-01-10T10:00:00' },
+      ]) };
+      if (url === 'https://selfcafe.jp/news/') return { data: news };
+      return orig(url, o);
+    });
+    return h;
+  };
+  test('nextShop: 店舗ページの公開日が新しい店から（一覧の順ではなく）', async () => {
+    const r = await createCafeSite({ http: withApi() }).nextShop({ done: [], today: '2026-11-08' });
+    expect(r.url).toBe('https://selfcafe.jp/shop/aichi/anjoeki/');
+  });
+  test('nextShop: 新着情報の OPEN 日がまだ先の店は紹介しない（開店前）', async () => {
+    const news = '<article class="news-listItem"><a href="https://selfcafe.jp/news/1/"><time datetime="2026-10-02">x</time><p class="news-listItem_category">新店舗情報</p><p class="news-listItem_title">安城市に「セルフカフェ安城駅店」11月20日(金)OPEN</p></a></article>';
+    const r = await createCafeSite({ http: withApi(news) }).nextShop({ done: [], today: '2026-11-08' });
+    expect(r.url).toBe('https://selfcafe.jp/shop/aichi/akatsuka/');
+    const after = await createCafeSite({ http: withApi(news) }).nextShop({ done: [], today: '2026-11-20' });
+    expect(after.url).toBe('https://selfcafe.jp/shop/aichi/anjoeki/');
+  });
+  test('nextShop: 未紹介が開店前の店だけなら null（その日は休む）', async () => {
+    const news = '<article class="news-listItem"><a href="https://selfcafe.jp/news/1/"><time datetime="2026-10-02">x</time><p class="news-listItem_category">新店舗情報</p><p class="news-listItem_title">安城市に「セルフカフェ安城駅店」11月20日(金)OPEN</p></a></article>';
+    const r = await createCafeSite({ http: withApi(news) }).nextShop({ done: ['https://selfcafe.jp/shop/aichi/akatsuka/'], today: '2026-11-08' });
+    expect(r).toBeNull();
+  });
   test('nextShop: 店舗ページが読めない店は飛ばして次の店へ（全店だめなら投げる）', async () => {
     const h = http();
     const orig = h.get.getMockImplementation();

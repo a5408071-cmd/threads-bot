@@ -6,6 +6,8 @@
  *   解析は iso-bot の src/cafeStoreFacts.js と同じ考え方（無い店でも有料サービスが 4 つ全部並ぶので is-disabled を必ず見る）。
  */
 const SHOP_LIST_URL = 'https://selfcafe.jp/shop/';
+// 店舗ページの公開日（WordPress の shop。2026-11-02 実測 75 店＝一覧と同じ）。既存店の紹介を新しい店から回すのに使う
+const SHOP_API_URL = 'https://selfcafe.jp/wp-json/wp/v2/shop?per_page=100&_fields=link,date';
 // 新着情報（2026-10-29 社長「特定の店舗は新店舗もしくは新しい取り組みがある場合のみ」）。種類は 新店舗情報／キャンペーン／お知らせ（2026-10-29 実測）
 const NEWS_URL = 'https://selfcafe.jp/news/';
 // メディア情報（テレビ・新聞・オンラインの掲載。2026-10-29 社長「HPのメディア情報あがったときは連動して」）は別の一覧。種類は「メディア掲載」として扱う
@@ -105,6 +107,7 @@ function parseStorePage(html, url) {
 }
 
 const DAY = 86400000;
+const squash = (t) => String(t || '').replace(/[\s　]+/g, '');
 const dayDiff = (a, b) => Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / DAY);
 const decode = (t) => String(t || '').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/&#0?38;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#8211;/g, '–');
 
@@ -301,10 +304,33 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
     return { item, text: entry.text, shopUrl: entry.shopUrl, storeName, photo, ...(photos ? { photos } : {}), kind: ANNOUNCE_CATEGORIES[item.category] };
   }
 
-  /** 既存店の紹介（2026-11-02 社長「既存店も順次」）: 一覧の順に、まだ紹介していない店（done・skip 以外）を 1 つ。全店済みなら最初から（cycleDone） */
-  async function nextShop({ done = [], skip = [] } = {}) {
-    const all = await listStores();
+  /** 店舗ページの公開日が新しい順に並べる。読めなければ一覧の順のまま */
+  async function newestFirst(urls) {
+    let rows;
+    try {
+      const r = await client.get(SHOP_API_URL, { timeout: 20000, headers: { 'User-Agent': 'Mozilla/5.0 (threads-bot)' } });
+      rows = typeof r.data === 'string' ? JSON.parse(r.data) : r.data;
+    } catch (e) { console.warn(`[threads] CAFE_SHOP_DATES_FAILED ${e.message}`); return urls; }
+    const date = new Map((Array.isArray(rows) ? rows : []).map((x) => [x.link, String(x.date || '')]));
+    return urls.map((u, i) => ({ u, i, d: date.get(u) || '' })).sort((a, b) => b.d.localeCompare(a.d) || a.i - b.i).map((x) => x.u);
+  }
+
+  /** 新着情報で OPEN 日がまだ先の店の名前（空白を除く）。読めなければ空 */
+  async function notYetOpen(today) {
+    if (!today) return new Set();
+    try {
+      return new Set(parseNewsList(await getText(NEWS_URL))
+        .filter((i) => ANNOUNCE_CATEGORIES[i.category] === 'newstore' && (announcementDate(i) || '') > today)
+        .map((i) => (i.title.match(/「([^」]+)」/) || [])[1]).filter(Boolean).map(squash));
+    } catch (e) { console.warn(`[threads] CAFE_NEWS_LIST_FAILED ${e.message}`); return new Set(); }
+  }
+
+  /** 既存店の紹介（2026-11-02 社長「既存店も順次」→「なるべく新しい順に 認知低いところを先に」）: 店舗ページの公開日が新しい順に、まだ紹介していない店（done・skip 以外）を 1 つ。
+   * 開店前の店（新着情報の OPEN 日が today より後）は出さない。全店済みなら最初から（cycleDone） */
+  async function nextShop({ done = [], skip = [], today = null } = {}) {
+    const all = await newestFirst(await listStores());
     if (!all.length) throw new Error('selfcafe.jp の店舗一覧が読めない');
+    const future = await notYetOpen(today);
     const usable = all.filter((u) => !skip.includes(u));
     const pool = usable.length ? usable : all;
     const fresh = pool.filter((u) => !done.includes(u));
@@ -314,9 +340,13 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
     let facts = null;
     let lastErr = null;
     for (const u of (cycleDone ? pool : fresh)) {
-      try { facts = await storeFacts(u); url = u; break; } catch (e) { lastErr = e; console.warn(`[threads] CAFE_SHOP_PAGE_FAILED ${u} ${e.message}`); }
+      let f;
+      try { f = await storeFacts(u); } catch (e) { lastErr = e; console.warn(`[threads] CAFE_SHOP_PAGE_FAILED ${u} ${e.message}`); continue; }
+      if (future.has(squash(f.name))) { console.log(`[threads] CAFE_SHOP_NOT_OPEN ${u}`); continue; }
+      facts = f; url = u; break;
     }
-    if (!url) throw lastErr || new Error('紹介できる店のページが読めない');
+    if (!url && !lastErr) return null; // 残りが開店前の店だけ: その日は既存店を休む（開けば翌日から）
+    if (!url) throw lastErr;
     const storeName = facts.name || null;
     const got = await fetchPhotos(facts.images, `HP: ${storeName || url}`);
     return { url, facts, storeName, photo: got[0] || null, ...(got.length >= 2 ? { photos: got } : {}), cycleDone };

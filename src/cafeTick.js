@@ -157,7 +157,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     await store.setConfig('announced', { urls: cur });
   };
 
-  // 既存店の紹介（2026-11-02 社長「新店舗終わったら既存店も順次やろうかね そこそこ伸びそう」）: 開始日以降、告知の無い日に 1 日 1 店、一覧の順に一周ずつ
+  // 既存店の紹介（2026-11-02 社長「新店舗終わったら既存店も順次やろうかね そこそこ伸びそう」→「なるべく新しい順に」）: 開始日以降、告知の無い日に 1 日 1 店、新しい店から一周ずつ
   const readShopIntro = async () => ((await store.getConfig('shopIntro')) || {}).done || {};
   const pickShop = async ({ force = false, recent = [] } = {}) => {
     if (env.CAFE_SHOP_INTRO === 'false' && !force) return null;
@@ -167,7 +167,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     if (!force && Object.values(await readAnnounced()).some((v) => v.days.includes(dateKey))) return null; // 告知が出た日は既存店を出さない
     if (!site.nextShop) return null;
     const skip = recent.filter((p) => p.type === 'newstore' && p.storeUrl).map((p) => p.storeUrl); // 最近新店として告知した店は後回し
-    return site.nextShop({ done: Object.keys(done), skip });
+    return site.nextShop({ done: Object.keys(done), skip, today: dateKey });
   };
   const markShopIntro = async (url, cycleDone) => {
     const done = cycleDone ? {} : await readShopIntro();

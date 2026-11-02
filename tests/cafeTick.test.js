@@ -431,6 +431,13 @@ describe('既存店の紹介（2026-11-02 社長「新店舗終わったら既�
     expect(((await d.store.getConfig('shopIntro')) || {}).done).toEqual({ [SHOP.url]: '2026-11-08' });
   });
 
+  test('nextShop に今日の日付を渡す（開店前の店を外すため）', async () => {
+    const d = mkShop();
+    await d.store.setToken(TOKEN);
+    await runCafeTick(d);
+    expect(d.site.nextShop.mock.calls[0][0]).toMatchObject({ today: '2026-11-08' });
+  });
+
   test('同じ日の 2 本目はふだんの回', async () => {
     const d = mkShop();
     await d.store.setToken(TOKEN);
