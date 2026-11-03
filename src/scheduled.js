@@ -17,22 +17,33 @@ function atMs(at) {
   return back === at ? ms : NaN;
 }
 
-async function add(store, { at, text, topicTag = null, linkUrl = null, replyText = null, replyTone = null, source = 'scheduled' }) {
+async function add(store, { at, text, topicTag = null, linkUrl = null, replyText = null, replyTone = null, replyToScheduledId = null, source = 'scheduled' }) {
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  return store.addScheduled({ id, at, text, topicTag, linkUrl, replyText, replyTone, source, claimedAt: null, postedAt: null, mediaId: null, doneAt: null });
+  return store.addScheduled({ id, at, text, topicTag, linkUrl, replyText, replyTone, replyToScheduledId, source, claimedAt: null, postedAt: null, mediaId: null, doneAt: null });
 }
 
 const list = (store) => store.listScheduled();
 
 async function runDue({ store, threads, now = () => new Date() }) {
-  const out = { posted: [], errors: [] };
-  const due = (await store.listScheduled()).filter((x) => !x.doneAt && atMs(x.at) <= now().getTime());
+  const out = { posted: [], errors: [], waiting: [] };
+  const due = (await store.listScheduled()).filter((x) => !x.doneAt && atMs(x.at) <= now().getTime()).sort((a, b) => (a.replyToScheduledId ? 1 : 0) - (b.replyToScheduledId ? 1 : 0) || atMs(a.at) - atMs(b.at)); // 返信は元の投稿の後に
   if (!due.length) return out;
   const token = await store.getToken();
   if (!token || !token.token) { out.errors.push('予約投稿: Threads の鍵が入っていません'); return out; }
   for (const x of due) {
     try {
       if (!(await store.claimScheduled(x.id, now().toISOString(), STALE_MS))) continue;
+      if (x.replyToScheduledId) {
+        // 先に出た予約投稿への返信（2026-11-03 社長「明日12:00に返信で掲示板のリンク」）。元がまだ出ていなければ次の見回りまで待つ
+        const parent = (await store.listScheduled()).find((p) => p.id === x.replyToScheduledId); // 同じ見回りで先に出た元も拾えるよう読み直す
+        if (!parent) { await store.updateScheduled(x.id, { claimedAt: null }); out.errors.push(`予約返信 ${x.at}: 返信先の予約が見つかりません`); continue; }
+        if (!parent.mediaId) { await store.updateScheduled(x.id, { claimedAt: null }); out.waiting.push(x.id); continue; } // まだ出ていないだけ＝エラーにしない
+        const rr = await threads.publishPost({ token: token.token, userId: token.userId, text: x.text, replyToId: parent.mediaId });
+        if (!rr.ok) { await store.updateScheduled(x.id, { claimedAt: null }); out.errors.push(`予約返信 ${x.at} に失敗: ${rr.error}`); continue; }
+        await store.updateScheduled(x.id, { mediaId: rr.mediaId, permalink: rr.permalink || null, postedAt: now().toISOString(), doneAt: now().toISOString() });
+        out.posted.push({ at: x.at, permalink: rr.permalink || null, reply: true });
+        continue;
+      }
       let mediaId = x.mediaId;
       if (!mediaId) {
         const r = await threads.publishPost({ token: token.token, userId: token.userId, text: x.text, ...(x.topicTag ? { topicTag: x.topicTag } : {}), ...(x.linkUrl ? { linkAttachment: x.linkUrl } : {}) });

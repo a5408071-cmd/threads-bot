@@ -84,3 +84,28 @@ test('runDue: replyTone は投稿の記録に残す（コメントへの自動�
   await scheduled.runDue({ store, threads, now: () => T });
   expect((await store.recentPosts(5))[0]).toMatchObject({ mediaId: 'm1', replyTone: 'さわやかに感謝' });
 });
+
+test('runDue: replyToScheduledId は先に出た予約投稿への返信として出す。元がまだなら待つ', async () => {
+  const store = await withToken(memoryStore());
+  const parent = await scheduled.add(store, { at: '2026-11-04T20:00', text: '本文' });
+  await scheduled.add(store, { at: '2026-11-03T20:00', text: 'リンク返信', replyToScheduledId: parent.id });
+  const threads = { publishPost: jest.fn(async ({ replyToId }) => ({ ok: true, mediaId: replyToId ? 'r1' : 'm1' })) };
+  const r1 = await scheduled.runDue({ store, threads, now: () => T });
+  expect(threads.publishPost).not.toHaveBeenCalled();
+  expect(r1.errors).toHaveLength(0);
+  expect(r1.waiting).toHaveLength(1);
+  await store.updateScheduled(parent.id, { mediaId: 'm9', doneAt: 'x' });
+  await scheduled.runDue({ store, threads, now: () => T });
+  expect(threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ text: 'リンク返信', replyToId: 'm9' }));
+  const child = (await store.listScheduled()).find((x) => x.replyToScheduledId);
+  expect(child).toMatchObject({ mediaId: 'r1', doneAt: expect.any(String) });
+});
+
+test('runDue: 元と返信が同じ見回りで期限なら、元を先に出して返信もその回に出す', async () => {
+  const store = await withToken(memoryStore());
+  const parent = await scheduled.add(store, { at: '2026-11-03T19:00', text: '本文' });
+  await scheduled.add(store, { at: '2026-11-03T18:00', text: '返信', replyToScheduledId: parent.id });
+  const threads = { publishPost: jest.fn(async ({ replyToId }) => ({ ok: true, mediaId: replyToId ? 'r1' : 'm1' })) };
+  await scheduled.runDue({ store, threads, now: () => T });
+  expect(threads.publishPost).toHaveBeenCalledWith(expect.objectContaining({ text: '返信', replyToId: 'm1' }));
+});
