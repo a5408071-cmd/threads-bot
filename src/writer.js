@@ -11,7 +11,7 @@ const GOLF_TYPES = ['aruaru', 'season', 'small', 'hook']; // 問いかけと分�
  * 2026-11-03 社長「ゴルフの方で方向転換 初めてのホノルルを全力で楽しみたい為にサイトを公開した 掲示板書き込み待ってるキャラ」「ホノルル多めに移行」:
  * ホノルル・掲示板・運動で 6 割、仕事・日常・時事・暦・コツ・季節・問いかけ締めで 3 割、ゴルフ（問いかけ・あるある・誘い）で 1 割ほど
  */
-const DEFAULT_WEIGHTS = { honolulu: 6, board: 5, fitness: 4, work: 1, daily: 1, news: 1, koyomi: 1, tips: 1, season: 1, hook: 1, question: 1, aruaru: 1, invite: 1, small: 0 };
+const DEFAULT_WEIGHTS = { honolulu: 5, board: 4, fitness: 3, work: 1, daily: 1, news: 1, koyomi: 1, tips: 1, season: 1, hook: 1, question: 1, aruaru: 1, invite: 1, small: 0 }; // 各型 0〜5（週次の分析の上限と同じ）
 // ウェブ検索で事実を確かめてから書く型（2026-10-29 社長「試験の残り何日」「暦」「継続のコツ へえーってなる」を追加）
 const SEARCH_TYPES = ['news', 'countdown', 'koyomi', 'tips', 'quote']; // countdown・quote（偉人の名言）は公式アカウントだけの型
 const COUNTDOWN_MAX_DAYS = 400;

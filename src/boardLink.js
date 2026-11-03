@@ -19,24 +19,40 @@ const TEMPLATES = [
 
 function createBoardLink({ store, threads, env = process.env, now = () => new Date() }) {
   const url = env.THREADS_BOARD_URL === undefined ? DEFAULT_URL : String(env.THREADS_BOARD_URL || '').trim();
-  const everyDays = env.THREADS_BOARD_LINK_EVERY_DAYS === undefined || env.THREADS_BOARD_LINK_EVERY_DAYS === '' ? DEFAULT_EVERY_DAYS : Math.max(0, Number(env.THREADS_BOARD_LINK_EVERY_DAYS) || 0);
+  // 間隔。壊れた値（数でない・負）は既定に戻す（0 に倒すと毎回付いてしまう＝2026-11-03 レビュー）
+  const n = Number(env.THREADS_BOARD_LINK_EVERY_DAYS);
+  const everyDays = env.THREADS_BOARD_LINK_EVERY_DAYS === undefined || env.THREADS_BOARD_LINK_EVERY_DAYS === '' || !Number.isFinite(n) || n < 0 ? DEFAULT_EVERY_DAYS : n;
+  let busy = false; // 同じプロセスで返信中（印を書く前の一瞬）にもう 1 本来たときの守り
 
-  /** 投稿が出た直後に呼ぶ。付けたら {ok:true, text}、付けなかったら {ok:false, skipped} */
+  /**
+   * 投稿が出た直後に呼ぶ。付けたら {ok:true, text}、付けなかったら {ok:false, skipped}。
+   * 順番は「記録を読む → 先に印（lastAt）を書く → 返信 → 記録を仕上げる」。返信に失敗したら印を元に戻す。
+   * 記録が読めないときは付けない（読めない間に投稿のたびに付くのを防ぐ）
+   */
   async function maybeReply({ token, mediaId, type }) {
     if (!url) return { ok: false, skipped: 'off' };
     if (!LINK_TYPES.includes(type)) return { ok: false, skipped: 'type' };
+    if (busy) return { ok: false, skipped: 'recent' };
     let c = null;
-    try { c = await store.getConfig('boardLink'); } catch (e) { console.warn(`[threads] BOARD_LINK_READ_FAILED ${e.message}`); }
+    try { c = await store.getConfig('boardLink'); } catch (e) { console.warn(`[threads] BOARD_LINK_READ_FAILED ${e.message}`); return { ok: false, skipped: 'config', error: e.message }; }
     const t = now();
     const lastMs = c && c.lastAt ? new Date(c.lastAt).getTime() : 0;
     if (lastMs && t.getTime() - lastMs < everyDays * 86400000) return { ok: false, skipped: 'recent', lastAt: c.lastAt };
     const count = (c && Number(c.count)) || 0;
-    const text = TEMPLATES[count % TEMPLATES.length].replace('{url}', url);
-    const r = await threads.publishReply({ token: token.token, userId: token.userId, text, replyToId: mediaId });
-    if (!r.ok) { console.warn(`[threads] BOARD_LINK_FAILED media=${mediaId} ${r.error}`); return { ok: false, error: r.error, stage: r.stage }; }
-    await store.setConfig('boardLink', { lastAt: t.toISOString(), mediaId, replyId: r.mediaId || null, count: count + 1 });
-    console.log(`[threads] BOARD_LINK media=${mediaId} reply=${r.mediaId} n=${count + 1}`);
-    return { ok: true, mediaId, replyId: r.mediaId || null, permalink: r.permalink || null, text };
+    const text = TEMPLATES[count % TEMPLATES.length].replace('{url}', () => url);
+    busy = true;
+    try {
+      try { await store.setConfig('boardLink', { ...(c || {}), lastAt: t.toISOString(), mediaId, pending: true, count }); } catch (e) { console.warn(`[threads] BOARD_LINK_CLAIM_FAILED ${e.message}`); return { ok: false, skipped: 'config', error: e.message }; }
+      const r = await threads.publishReply({ token: token.token, userId: token.userId, text, replyToId: mediaId });
+      if (!r.ok) {
+        console.warn(`[threads] BOARD_LINK_FAILED media=${mediaId} ${r.error}`);
+        try { await store.setConfig('boardLink', c || { count }); } catch (e) { console.warn(`[threads] BOARD_LINK_RESTORE_FAILED ${e.message}`); } // 印を戻す（次の投稿でまた付けられる）
+        return { ok: false, error: r.error, stage: r.stage };
+      }
+      try { await store.setConfig('boardLink', { lastAt: t.toISOString(), mediaId, replyId: r.mediaId || null, count: count + 1 }); } catch (e) { console.warn(`[threads] BOARD_LINK_SAVE_FAILED ${e.message}`); } // 印は残っているので二重にはならない
+      console.log(`[threads] BOARD_LINK media=${mediaId} reply=${r.mediaId} n=${count + 1}`);
+      return { ok: true, mediaId, replyId: r.mediaId || null, permalink: r.permalink || null, text };
+    } finally { busy = false; }
   }
 
   return { maybeReply };

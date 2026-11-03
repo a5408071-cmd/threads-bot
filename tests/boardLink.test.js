@@ -46,13 +46,40 @@ test('ゴルフなど関係ない型には添えない。文は順番に変え�
   expect((await store.getConfig('boardLink')).count).toBe(2);
 });
 
+test('記録が読めないときは付けない（読めない間に毎回付かないように）。間隔の設定が壊れていれば既定の 3 日', async () => {
+  const d = mk();
+  d.store.getConfig = async () => { throw new Error('firestore down'); };
+  expect(await d.link.maybeReply({ token: TOKEN, mediaId: 'm1', type: 'honolulu' })).toMatchObject({ ok: false, skipped: 'config' });
+  expect(d.threads.publishReply).not.toHaveBeenCalled();
+  const bad = mk({ env: { THREADS_BOARD_LINK_EVERY_DAYS: 'abc' } });
+  await bad.store.setConfig('boardLink', { lastAt: '2026-11-03T03:00:00.000Z', count: 1 }); // 2 日前
+  expect(await bad.link.maybeReply({ token: TOKEN, mediaId: 'm1', type: 'honolulu' })).toMatchObject({ ok: false, skipped: 'recent' });
+});
+
+test('先に印（lastAt）を取ってから返信する。同じ見回りで 2 本続けて出ても付くのは 1 本だけ。失敗したら印を戻す', async () => {
+  const { store, threads, link } = mk();
+  let release;
+  threads.publishReply.mockImplementationOnce(() => new Promise((r) => { release = () => r({ ok: true, mediaId: 'r1' }); }));
+  const first = link.maybeReply({ token: TOKEN, mediaId: 'm1', type: 'honolulu' });
+  await new Promise((r) => setImmediate(r));
+  expect(await link.maybeReply({ token: TOKEN, mediaId: 'm2', type: 'board' })).toMatchObject({ ok: false, skipped: 'recent' }); // 1 本目の返信中でも印があるので止まる
+  release(); expect((await first).ok).toBe(true);
+  expect(threads.publishReply).toHaveBeenCalledTimes(1);
+  // 失敗したら印を戻す＝次の投稿でまた付けられる
+  const f = mk();
+  f.threads.publishReply.mockImplementationOnce(async () => ({ ok: false, error: 'x' }));
+  expect(await f.link.maybeReply({ token: TOKEN, mediaId: 'm1', type: 'honolulu' })).toMatchObject({ ok: false, error: 'x' });
+  expect(((await f.store.getConfig('boardLink')) || {}).lastAt).toBeUndefined(); // 印（lastAt）が戻っている（Firestore に null は書けないので {count} だけ残る）
+  expect((await f.link.maybeReply({ token: TOKEN, mediaId: 'm2', type: 'honolulu' })).ok).toBe(true);
+});
+
 test('THREADS_BOARD_URL が空なら何もしない。返信に失敗しても落ちない', async () => {
   const off = mk({ env: { THREADS_BOARD_URL: '' } });
   expect(await off.link.maybeReply({ token: TOKEN, mediaId: 'm1', type: 'honolulu' })).toMatchObject({ ok: false, skipped: 'off' });
   const bad = mk();
   bad.threads.publishReply.mockImplementation(async () => ({ ok: false, error: 'x' }));
   expect(await bad.link.maybeReply({ token: TOKEN, mediaId: 'm1', type: 'honolulu' })).toMatchObject({ ok: false, error: 'x' });
-  expect(await bad.store.getConfig('boardLink')).toBeFalsy();
+  expect(((await bad.store.getConfig('boardLink')) || {}).lastAt).toBeUndefined();
 });
 
 test('tick: 自動投稿が出たあとに boardLink.maybeReply を呼び、結果と社長への写しを残す', async () => {
