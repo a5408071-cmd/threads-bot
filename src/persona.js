@@ -7,7 +7,7 @@
  */
 
 const TYPE_GUIDE = {
-  question: '質問型（ゴルフ）: 読んだ人がコメントしたくなる問いかけ（例: 名古屋で平日ゴルフ行ける人いませんか／ベストスコア更新した時なにした？）',
+  question: '質問型（ゴルフ）: 読んだ人が一言で答えられる2択の問いかけ（例: ゴルフ場選び、景色重視派？スコア重視派？／練習場はドライバー派？アプローチ派？）。自分の答えも一言添える',
   aruaru: 'あるある型（ゴルフ・飲み）: 「わかる〜」となる小さな共感ネタ。オチは明るく',
   invite: '誘い型: 今週末あたりゆるく回りたい・飲みたい、同じノリの人は絡んで、の呼びかけ（曜日に合わせる）',
   season: '季節型: 今日の日付から季節や気候に触れる（秋の朝ラン日和・ナイターゴルフの季節・年末の予定 など。天気予報の断定はしない）',
@@ -90,4 +90,7 @@ ${SAMPLES.map((s) => s.split('\n').map((l) => `> ${l}`).join('\n')).join('\n\n')
 # 出力
 本文 → 改行 → 「タグ: 〇〇」の順で返す。前置き・説明・引用符・「投稿:」などの見出しは付けない。`;
 
-module.exports = { SYSTEM, TYPE_GUIDE, SAMPLES, TAG_HINTS, DEFAULT_TAG };
+// ゴルフの型は締めを2択の問いかけに（2026-11-03 社長。反応が付いたのは2択の問いかけだけだった）
+const CLOSE_WITH_CHOICE = ['question', 'aruaru', 'season', 'small', 'hook']; // invite は誘いで締めるので外す
+
+module.exports = { SYSTEM, TYPE_GUIDE, SAMPLES, TAG_HINTS, DEFAULT_TAG, CLOSE_WITH_CHOICE };

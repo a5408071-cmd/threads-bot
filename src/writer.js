@@ -5,6 +5,7 @@
 const persona = require('./persona');
 
 const TYPES = ['question', 'aruaru', 'invite', 'season', 'small', 'hook', 'work', 'fitness', 'daily', 'news', 'koyomi', 'tips']; // countdown はセルフカフェ公式だけ（2026-11-02 趣味アカウントは廃止）
+const GOLF_TYPES = ['aruaru', 'season', 'small', 'hook']; // 問いかけと分け合うゴルフの型（invite は週末に増やす誘いなので触らない）
 const NON_GOLF = ['work', 'fitness', 'daily', 'news']; // ゴルフ以外（2026-10-28 社長「ゴルフ以外も」「経営者らしく」「マラソン・ジム」）。重みを 2 倍にして半分くらい
 // ウェブ検索で事実を確かめてから書く型（2026-10-29 社長「試験の残り何日」「暦」「継続のコツ へえーってなる」を追加）
 const SEARCH_TYPES = ['news', 'countdown', 'koyomi', 'tips', 'quote']; // countdown・quote（偉人の名言）は公式アカウントだけの型
@@ -55,6 +56,9 @@ function jstWeekday(dateKeyOrDate) {
  */
 function pickType(recentTypes = [], date = new Date(), rng = Math.random, weights = null) {
   const avoid = new Set((recentTypes || []).slice(0, 2));
+  // 問いかけ型は直前が問いかけのときだけ避ける（2026-11-03 社長「2択の問いかけ中心」）
+  avoid.delete('question');
+  if ((recentTypes || [])[0] === 'question') avoid.add('question');
   let pool = [];
   if (weights && typeof weights === 'object') {
     for (const t of TYPES) {
@@ -71,6 +75,20 @@ function pickType(recentTypes = [], date = new Date(), rng = Math.random, weight
     if ([5, 6, 0].includes(wd) && pool.includes('invite')) pool = [...pool, 'invite', 'invite']; // 金土日は誘い型を 3 倍に
     for (const t of NON_GOLF) if (pool.includes(t)) pool = [...pool, t];
   }
+  // ゴルフの投稿の中で問いかけが半分くらいになるよう配り直す（ゴルフ全体と、ゴルフ以外の割合は変えない。2026-11-03 社長「2択の問いかけ中心」）
+  const w = new Map();
+  for (const t of pool) w.set(t, (w.get(t) || 0) + 1);
+  const golfOthers = [...w.keys()].filter((t) => GOLF_TYPES.includes(t));
+  const sumOthers = golfOthers.reduce((n, t) => n + w.get(t), 0);
+  // 問いかけがプールに無い（直前が問いかけ・週次の分析で重みが 0）回は増やさない
+  if (pool.includes('question') && sumOthers) {
+    const half = (sumOthers + (w.get('question') || 0)) / 2;
+    for (const t of golfOthers) w.set(t, (w.get(t) * half) / sumOthers);
+    w.set('question', half);
+  }
+  const total = [...w.values()].reduce((n, x) => n + x, 0);
+  let r = rng() * total;
+  for (const [t, x] of w) { if (r < x) return t; r -= x; }
   return pool[Math.floor(rng() * pool.length)];
 }
 
@@ -185,6 +203,7 @@ function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto =
   if (reasons && reasons.length) {
     lines.push(`前の案は次の理由で使えませんでした。直して書き直してください: ${reasons.join(' / ')}`);
   }
+  if ((P.CLOSE_WITH_CHOICE || []).includes(type)) lines.push('締めは、読んだ人が一言で答えられる2択の問いかけにする（例:「景色重視派？スコア重視派？」「朝イチ派？午後スルー派？」）。問いかけは1つだけ。');
   lines.push(`長さ: ${(length || pickLength({ photo, type, rand: () => 0.5 })).text}`);
   lines.push('直近の投稿と同じ締め方（誘い・募集・一杯）や同じ自己紹介を繰り返さない。');
   if (stockPhoto) lines.push('この投稿には、あとから写真サイト（Pixabay）で探した本物の写真を 1 枚付けます。本文の内容に合う写真を探す英語の検索語（2〜4 語。例: roasted sweet potato autumn / autumn golf course morning / highball glass bar）を、タグの行の前に「写真: <文の主役を表す検索語> | <同じ主役の別の言い方>」の 1 行で書いてください（2 つを | で区切る。1 つ目で見つからなければ 2 つ目。どちらも文の**主役**を表す語にする。例: hawaii beach sunrise | waikiki ocean palm trees ／ morning run city sunrise | runner sunrise road）。写真サイトは海外のものが中心なので、2 つ目は雰囲気寄り（例: morning run city sunrise / rooftop bar night / modern office desk coffee）にする。キラキラして前向きな雰囲気の写真になる語を選ぶ（生活感のある料理・台所は避ける）。本文は写真の説明にはしない。');
@@ -264,4 +283,4 @@ async function photoFits({ text, bytes, mediaType = 'image/jpeg', env = {}, anth
   }
 }
 
-module.exports = { pickType, checkText, writePost, photoFits, similarity, parseBanned, fillCountdown, TYPES, SEARCH_TYPES, MAX_CHARS, MIN_CHARS, LENGTH_BANDS, pickLength, DEFAULT_MODEL, DEFAULT_BANNED, MAX_TOKENS, FIT_MODEL };
+module.exports = { userPrompt, pickType, checkText, writePost, photoFits, similarity, parseBanned, fillCountdown, TYPES, SEARCH_TYPES, MAX_CHARS, MIN_CHARS, LENGTH_BANDS, pickLength, DEFAULT_MODEL, DEFAULT_BANNED, MAX_TOKENS, FIT_MODEL };

@@ -3,31 +3,28 @@ const { drawSlots, dueSlot, jstDateKey, jstHm } = require('../src/slots');
 function seeded(seq) { let i = 0; return () => seq[i++ % seq.length]; }
 const toMin = (s) => { const [h, m] = s.split(':').map(Number); return h * 60 + m; };
 
-test('4 本（2026-10-28 社長「毎日4投稿しよう」）: 朝 7:00〜10:00・昼 11:30〜14:30・夕 16:00〜19:00・夜 20:00〜23:30、分は 00 と 30 以外、昇順で 90 分以上あく', () => {
-  let fours = 0;
+test('2 本（2026-11-03 社長「本数を減らす」）: 朝 7:00〜9:30・夜 19:00〜22:30、分は 00 と 30 以外、昇順', () => {
+  let twos = 0;
   for (let k = 0; k < 300; k++) {
     const { slots } = drawSlots('2026-10-28', () => ((k * 0.37) + 0.13) % 1);
     expect(slots).toEqual([...slots].sort());
     for (const s of slots) expect([0, 30]).not.toContain(Number(s.split(':')[1]));
-    for (let i = 1; i < slots.length; i++) expect(toMin(slots[i]) - toMin(slots[i - 1])).toBeGreaterThanOrEqual(90);
-    if (slots.length < 4) continue;
-    fours++;
-    expect(toMin(slots[0])).toBeGreaterThanOrEqual(7 * 60); expect(toMin(slots[0])).toBeLessThanOrEqual(10 * 60);
-    expect(toMin(slots[1])).toBeGreaterThanOrEqual(11 * 60 + 30); expect(toMin(slots[1])).toBeLessThanOrEqual(14 * 60 + 30);
-    expect(toMin(slots[2])).toBeGreaterThanOrEqual(16 * 60); expect(toMin(slots[2])).toBeLessThanOrEqual(19 * 60);
-    expect(toMin(slots[3])).toBeGreaterThanOrEqual(20 * 60); expect(toMin(slots[3])).toBeLessThanOrEqual(23 * 60 + 30);
+    if (slots.length < 2) continue;
+    twos++;
+    expect(toMin(slots[0])).toBeGreaterThanOrEqual(7 * 60); expect(toMin(slots[0])).toBeLessThanOrEqual(9 * 60 + 30);
+    expect(toMin(slots[1])).toBeGreaterThanOrEqual(19 * 60); expect(toMin(slots[1])).toBeLessThanOrEqual(22 * 60 + 30);
   }
-  expect(fours).toBeGreaterThan(200);
+  expect(twos).toBeGreaterThan(200);
 });
 
-test('1/7 の日は 1 本少ない（3 本）、それ以外は 4 本', () => {
-  expect(drawSlots('2026-10-28', seeded([0.05, 0.5, 0.5, 0.5, 0.5, 0.5])).slots).toHaveLength(3);
-  expect(drawSlots('2026-10-28', seeded([0.9, 0.5, 0.5, 0.5, 0.5, 0.5])).slots).toHaveLength(4);
+test('1/7 の日は 1 本だけ、それ以外は 2 本', () => {
+  expect(drawSlots('2026-10-28', seeded([0.05, 0.5, 0.5, 0.5, 0.5, 0.5])).slots).toHaveLength(1);
+  expect(drawSlots('2026-10-28', seeded([0.9, 0.5, 0.5, 0.5, 0.5, 0.5])).slots).toHaveLength(2);
 });
 
 test('乱数を渡さなくても動く（Math.random）', () => {
   const { slots } = drawSlots('2026-10-28');
-  expect(slots.length === 3 || slots.length === 4).toBe(true);
+  expect(slots.length === 1 || slots.length === 2).toBe(true);
 });
 
 test('dueSlot: 時刻前は null、過ぎたら due、投稿済みは飛ばす、猶予を超えた枠は late', () => {
