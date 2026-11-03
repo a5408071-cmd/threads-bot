@@ -270,3 +270,18 @@ describe('公式: リンクの後始末（レビュー指摘）', () => {
     expect(t).toBe('ありがとうございます\nhttps://selfcafe.jp/');
   });
 });
+
+test('投稿に replyTone があれば、そのコメントの返事の調子として AI に渡す（2026-11-03 社長「短文でさわやかに元気で感謝」）', async () => {
+  const store = memoryStore({ now: () => NOW });
+  await store.setConfig('repliesInitialized', { at: 'x' });
+  await store.savePost({ mediaId: P1.id, text: '人生初のフルマラソン', replyTone: '短文でさわやかに元気よく感謝を伝える' });
+  const threads = {
+    listMyPosts: jest.fn(async () => [P1]),
+    listReplies: jest.fn(async () => [{ id: 'r9', text: '水分こまめに！', username: 'amy', timestamp: 't', permalink: 'p', is_reply_owned_by_me: false }]),
+    publishReply: jest.fn(async () => ({ ok: true, mediaId: 'x', permalink: 'y' })),
+  };
+  const anthropic = { messages: { create: jest.fn(async () => ({ content: [{ type: 'text', text: 'ありがとうございます！' }] })) } };
+  const replies = createReplies({ threads, store, notify: { owner: jest.fn(async () => ({ ok: true })) }, now: () => NOW, anthropic, env: { THREADS_AUTO_REPLY: 'true' } });
+  await replies.poll({ token: 'tk', userId: 'u1' });
+  expect(JSON.stringify(anthropic.messages.create.mock.calls[0][0])).toMatch(/短文でさわやかに元気よく感謝を伝える/);
+});

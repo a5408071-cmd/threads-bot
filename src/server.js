@@ -2,7 +2,7 @@
  * threads-bot の HTTP 入口。
  *   GET  /health         … 生存確認
  *   GET  /cron/tick      … 10分おきの見回り（X-Cron-Key か ?key=）。?dry=1 は文を返すだけ、?test=1 は文を社長DMへ（投稿しない）
- *   POST /api/post       … イソからの投稿（X-Cron-Key。JSON {text, imageUrl?, topicTag?, linkUrl?, at?（JST 予約）, replyText?（予約の返信）, source?, preview?, force?}）
+ *   POST /api/post       … イソからの投稿（X-Cron-Key。JSON {text, imageUrl?, topicTag?, linkUrl?, at?（JST 予約）, replyText?（予約の返信）, replyTone?（コメントへの自動返信の調子）, source?, preview?, force?}）
  *   GET  /admin/status   … 今日の枠・トークンの残り日数・直近の投稿（鍵そのものは返さない）
  *   GET  /oauth/start    … 社長が新垢でログインしたブラウザで開く（?key=）→ Threads の許可画面へ
  *   GET  /oauth/callback … Threads から戻る。code をトークンに換えて Firestore に保存
@@ -177,7 +177,8 @@ function createApp(deps = {}) {
       // 返信文にも NG 語を掛ける（リンクは返信に置く前提なので URL の部分は外して見る）
       const rc = replyText ? writer.checkText(replyText.replace(/https:\/\/\S+/g, ''), { banned }) : { ok: true };
       if (!rc.ok && !force) return res.status(400).json({ ok: false, blocked: true, reason: `返信: ${rc.reason}` });
-      const item = await scheduled.add(getStore(), { at, text, topicTag, linkUrl: imageUrl ? null : linkUrl, replyText, source });
+      const replyTone = body.replyTone ? String(body.replyTone).trim() : null; // コメントへの自動返信の調子（この投稿だけ）
+      const item = await scheduled.add(getStore(), { at, text, topicTag, linkUrl: imageUrl ? null : linkUrl, replyText, replyTone, source });
       console.log(`[threads] API_SCHEDULED at=${at} id=${item.id}`);
       return res.json({ ok: true, scheduled: true, at, id: item.id });
     }

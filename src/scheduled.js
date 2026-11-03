@@ -17,9 +17,9 @@ function atMs(at) {
   return back === at ? ms : NaN;
 }
 
-async function add(store, { at, text, topicTag = null, linkUrl = null, replyText = null, source = 'scheduled' }) {
+async function add(store, { at, text, topicTag = null, linkUrl = null, replyText = null, replyTone = null, source = 'scheduled' }) {
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  return store.addScheduled({ id, at, text, topicTag, linkUrl, replyText, source, claimedAt: null, postedAt: null, mediaId: null, doneAt: null });
+  return store.addScheduled({ id, at, text, topicTag, linkUrl, replyText, replyTone, source, claimedAt: null, postedAt: null, mediaId: null, doneAt: null });
 }
 
 const list = (store) => store.listScheduled();
@@ -40,7 +40,7 @@ async function runDue({ store, threads, now = () => new Date() }) {
         mediaId = r.mediaId;
         const postedAt = now().toISOString();
         await store.updateScheduled(x.id, { mediaId, permalink: r.permalink || null, postedAt }); // 返信より先に残す（返信で落ちても本投稿を出し直さない）
-        await store.savePost({ mediaId, text: x.text, type: 'manual', source: x.source, permalink: r.permalink || null, postedAt });
+        await store.savePost({ mediaId, text: x.text, type: 'manual', source: x.source, ...(x.replyTone ? { replyTone: x.replyTone } : {}), permalink: r.permalink || null, postedAt });
         out.posted.push({ at: x.at, permalink: r.permalink || null });
       }
       if (x.replyText) {

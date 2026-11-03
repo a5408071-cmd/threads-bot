@@ -72,6 +72,7 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
         '自分の投稿に次のコメントが付きました。本人として、短い返事（1〜2 文、80 字以内。絵文字は 0〜1 個）を書いてください。',
         '相手の名前は書かない。感謝・共感・軽い問い返し・誘いへの前向きな返事。自分の投稿の繰り返しや宣伝はしない。',
         '営業・勧誘・スパム・荒らし・意味の分からないコメント・返事が不要な一言（スタンプだけ等）なら「SKIP」とだけ答える。',
+        ...(post && post.replyTone ? [`この投稿へのコメントの返事の調子（投稿者の指定。これを優先）: ${post.replyTone}`] : []),
         ...guide,
         '',
         `自分の投稿: ${cut(post && post.text, 300)}`,
@@ -110,7 +111,7 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
         if (r.is_reply_owned_by_me || (r.from && String(r.from.id) === String(userId))) continue; // 自分の返信
         if (await store.seenReply(r.id)) continue;
         // ふだんの回の storeUrl は写真の店（話と関係ない）なので渡さない
-        { const m = mine.get(p.id) || {}; fresh.push({ ...r, post: { ...p, text: m.text || '', storeUrl: m.storeName ? m.storeUrl : undefined, storeName: m.storeName } }); }
+        { const m = mine.get(p.id) || {}; fresh.push({ ...r, post: { ...p, text: m.text || '', storeUrl: m.storeName ? m.storeUrl : undefined, storeName: m.storeName, replyTone: m.replyTone } }); }
       }
     }
     out.newReplies = fresh.length;

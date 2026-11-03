@@ -76,3 +76,11 @@ test('atMs: 存在しない日付は NaN', () => {
   expect(Number.isNaN(scheduled.atMs('2026-02-30T10:00'))).toBe(true);
   expect(scheduled.atMs('2026-11-03T20:00')).toBe(Date.parse('2026-11-03T11:00:00Z'));
 });
+
+test('runDue: replyTone は投稿の記録に残す（コメントへの自動返信の調子）', async () => {
+  const store = await withToken(memoryStore());
+  await scheduled.add(store, { at: '2026-11-03T20:00', text: '本文A', replyTone: 'さわやかに感謝' });
+  const threads = { publishPost: jest.fn(async () => ({ ok: true, mediaId: 'm1' })) };
+  await scheduled.runDue({ store, threads, now: () => T });
+  expect((await store.recentPosts(5))[0]).toMatchObject({ mediaId: 'm1', replyTone: 'さわやかに感謝' });
+});
