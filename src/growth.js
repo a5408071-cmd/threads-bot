@@ -7,7 +7,14 @@
  */
 const { jstDateKey } = require('./slots');
 
-const DEFAULT_WEIGHTS = { question: 2, aruaru: 1, invite: 1, season: 1, small: 1, hook: 1, work: 2, fitness: 2, daily: 1, news: 1, koyomi: 1, tips: 1 };
+const { DEFAULT_WEIGHTS } = require('./writer'); // 既定の配分は writer と同じもの（2026-11-03 方向転換で一本化）
+/**
+ * 方針の名前。保存した配分（strategy）に同じ policy が付いていなければ持ち込まない＝方針を変えたときに前の配分（ゴルフ中心）が残らないように。
+ * 方針を変えるときはここを変える（2026-11-03 社長「ホノルル多めに移行」）
+ */
+const POLICY = 'honolulu-2026-11';
+// 週次の分析がどう答えても、主役の型は下限を守る（ホノルル・掲示板・運動で合計の 6 割前後を保つ）
+const MIN_WEIGHTS = { honolulu: 4, board: 3, fitness: 2 };
 const LOOKBACK_DAYS = 7;
 const WEEKLY_DAY = 1; // 月曜
 const DEFAULT_MODEL = 'claude-opus-5-5';
@@ -19,7 +26,10 @@ function createGrowth({ threads, store, notify, anthropic, env = process.env, no
   async function weightsFor() {
     try {
       const s = await store.getConfig('strategy');
-      if (s && s.weights && typeof s.weights === 'object') { const w = { ...DEFAULT_WEIGHTS }; for (const t of Object.keys(w)) if (t in s.weights) w[t] = s.weights[t]; return w; } // 廃止した型（countdown など）は持ち込まない
+      if (s && s.weights && typeof s.weights === 'object') {
+        if (s.policy !== POLICY) { console.log(`[threads] STRATEGY_STALE policy=${s.policy || '(none)'} → 既定（${POLICY}）`); return { ...DEFAULT_WEIGHTS }; } // 前の方針で作った配分は使わない
+        const w = { ...DEFAULT_WEIGHTS }; for (const t of Object.keys(w)) if (t in s.weights) w[t] = s.weights[t]; return w; // 廃止した型（countdown など）は持ち込まない
+      }
     } catch (e) { console.warn(`[threads] STRATEGY_READ_FAILED ${e.message}`); }
     return { ...DEFAULT_WEIGHTS };
   }
@@ -90,8 +100,9 @@ function createGrowth({ threads, store, notify, anthropic, env = process.env, no
     const prompt = [
       `あなたは Threads アカウントの運用を考える担当です。目標: 1 か月以内にフォロワー ${GOAL} 人（今 ${latest ?? '不明'} 人、この 7 日で ${delta == null ? '不明' : (delta >= 0 ? '+' : '') + delta} 人）。`,
       '直近 7 日の投稿の数字を見て、来週の投稿の型ごとの配分（weights）を決め、社長に送る短い報告（200 字以内。数字と「来週こうする」）を書いてください。',
-      `型: question（ゴルフの質問）, aruaru（ゴルフ・飲みのあるある）, invite（誘い）, season（季節）, small（道具・酒の小ネタ）, hook（問いかけで締める）, work（経営者の仕事）, fitness（マラソン・ジム）, daily（キラキラ日常）, news（時事）, koyomi（暦）, tips（継続・やる気のコツ）。今の配分: ${JSON.stringify(current)}`,
-      '判断のコツ: 返信が多い型はアルゴリズムに強いので増やす。表示が少ない型は減らす（0 にはしない。各型 0〜5 の整数で、合計 10〜20）。写真あり/なしの差、時間帯の差も見る。本数が少なくて判断できない型は今の値のまま。',
+      `型: honolulu（初ホノルルの緊張とワクワク。主役）, board（同じ大会の掲示板を作った・書き込み待ってる。キャラの軸）, fitness（マラソンに向けた練習・ジム）, question（ゴルフの2択）, aruaru（ゴルフ・飲みのあるある）, invite（誘い）, season（季節）, small（道具・酒の小ネタ）, hook（問いかけで締める）, work（経営者の仕事）, daily（キラキラ日常）, news（時事）, koyomi（暦）, tips（継続・やる気のコツ）。今の配分: ${JSON.stringify(current)}`,
+      `方針（2026-11-03）: このアカウントは「初めてのホノルルマラソンを全力で楽しむ人・掲示板に書き込んでもらうキャラ」。honolulu・board・fitness で合計の 6 割前後を保ち（下限 honolulu ${MIN_WEIGHTS.honolulu}・board ${MIN_WEIGHTS.board}・fitness ${MIN_WEIGHTS.fitness}）、ゴルフ（question・aruaru・invite・small）は合わせて 1〜2 割まで。`,
+      '判断のコツ: 返信が多い型はアルゴリズムに強いので増やす。表示が少ない型は減らす（主役以外は 0 でもよい。各型 0〜5 の整数で、合計 15〜25）。写真あり/なしの差、時間帯の差も見る。本数が少なくて判断できない型は今の値のまま。',
       '',
       summarize(posts, metrics),
       '',
@@ -115,7 +126,8 @@ function createGrowth({ threads, store, notify, anthropic, env = process.env, no
     const weights = {};
     for (const t of Object.keys(DEFAULT_WEIGHTS)) weights[t] = t in parsed.weights ? Math.max(0, Math.min(5, Math.round(Number(parsed.weights[t]) || 0))) : (current[t] ?? DEFAULT_WEIGHTS[t]); // 答えに無い型（後から足した型など）は今の重みのまま
     if (!Object.values(weights).some((v) => v > 0)) Object.assign(weights, current);
-    await store.setConfig('strategy', { weights, notes: parsed.notes || [], updatedAt: now().toISOString(), followers: latest, delta });
+    for (const [t, min] of Object.entries(MIN_WEIGHTS)) if ((weights[t] || 0) < min) weights[t] = min; // 主役の型の下限
+    await store.setConfig('strategy', { policy: POLICY, weights, notes: parsed.notes || [], updatedAt: now().toISOString(), followers: latest, delta });
     await store.setConfig(key, { at: now().toISOString(), ok: true });
     const order = Object.entries(weights).sort((a, b) => b[1] - a[1]).map(([t, w]) => `${t}:${w}`).join(' ');
     await notify.owner(`${head}\n${parsed.report || ''}\n\n来週の配分: ${order}${(parsed.notes || []).length ? `\n・${(parsed.notes || []).slice(0, 3).join('\n・')}` : ''}`);
@@ -126,4 +138,4 @@ function createGrowth({ threads, store, notify, anthropic, env = process.env, no
   return { daily, weekly, weightsFor, summarize };
 }
 
-module.exports = { createGrowth, DEFAULT_WEIGHTS, WEEKLY_DAY, GOAL };
+module.exports = { createGrowth, DEFAULT_WEIGHTS, POLICY, MIN_WEIGHTS, WEEKLY_DAY, GOAL };

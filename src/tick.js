@@ -15,13 +15,13 @@ const defaultWriter = require('./writer');
 const RECENT_POSTS = 14;
 const RECENT_TYPES = 2;
 const PHOTO_EVERY = 4;
-const STOCK_TYPES = ['daily', 'news', 'season', 'work', 'fitness', 'koyomi', 'tips']; // ゴルフ以外＝ストック写真（社長の写真はゴルフの型だけ）
+const STOCK_TYPES = ['honolulu', 'board', 'daily', 'news', 'season', 'work', 'fitness', 'koyomi', 'tips']; // ゴルフ以外＝ストック写真（社長の写真はゴルフの型だけ）
 const REFRESH_BEFORE_DAYS = 10;
 const TOKEN_ALERT_HOURS = 12;
 
 const daysLeft = (expiresAt, now) => Math.floor((new Date(expiresAt).getTime() - now.getTime()) / 86400000);
 
-async function runTick({ env = process.env, store, threads, writer = defaultWriter, notify, anthropic, now = () => new Date(), mode = 'live', replies = null, draw = null, photos = null, stock = null, growth = null, forcePhoto = false, forcePost = false, forceType = null }) {
+async function runTick({ env = process.env, store, threads, writer = defaultWriter, notify, anthropic, now = () => new Date(), mode = 'live', replies = null, draw = null, photos = null, stock = null, growth = null, boardLink = null, forcePhoto = false, forcePost = false, forceType = null }) {
   const t = now();
   const dateKey = slots.jstDateKey(t);
   const out = { ok: true, mode, dateKey, slots: null, due: null, posted: [], skipped: [], preview: null, token: null, replies: null, growth: null, autoPost: env.THREADS_AUTO_POST !== 'false', errors: [] };
@@ -81,6 +81,14 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
     // AI に写真を見せて文に合うか確かめてから付ける（writer.photoFits が無ければ確かめない）
     const verify = writer.photoFits ? (p) => writer.photoFits({ text, bytes: p.bytes, mediaType: p.mediaType, env, anthropic }) : null;
     try { return await stock.search(query, { verify }); } catch (e) { console.warn(`[threads] STOCK_THROW ${e.message}`); return null; }
+  };
+  // 掲示板のリンクを数日に 1 回、出た投稿の返信欄に添える（boardLink.js）。失敗しても投稿は済んでいるので止めない
+  const addBoardLink = async (mediaId, type) => {
+    if (!boardLink || mode !== 'live') return;
+    try {
+      const b = await boardLink.maybeReply({ token, mediaId, type });
+      if (b.ok) { out.boardLink = b; await tell(`🔗 掲示板のリンクを返信で添えました\n${b.text}`); } else if (b.error) { out.boardLink = b; fail(`掲示板のリンクの返信に失敗: ${b.error}`); }
+    } catch (e) { fail(`掲示板のリンクの返信でエラー: ${e.message}`); }
   };
   const compose = async () => {
     const recent = await store.recentPosts(RECENT_POSTS);
@@ -156,6 +164,7 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
           if (env.THREADS_COPY_TO_OWNER === 'true') {
             await tell(`📝 Threads に投稿しました（${n} 本目・${w.type}${w.photo ? `・📷 ${w.photo.name}` : ''}${w.tag ? `・#${w.tag}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
           }
+          await addBoardLink(r.mediaId, w.type);
         }
       }
     } else {
@@ -179,6 +188,7 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
         out.posted.push({ index: null, manual: true, mediaId: r.mediaId, permalink: r.permalink, type: w.type, ...(w.tag ? { tag: w.tag } : {}), ...(w.photo ? { photo: w.photo.name } : {}) });
         console.log(`[threads] POSTED manual type=${w.type} media=${r.mediaId} chars=${w.text.length}`);
         await tell(`📝 Threads に投稿しました（手動・${w.type}${w.photo ? `・📷 ${w.photo.name}` : ''}${w.tag ? `・#${w.tag}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
+        await addBoardLink(r.mediaId, w.type);
       }
     }
   }

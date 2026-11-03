@@ -20,10 +20,12 @@ test('pickType は直近 2 本の型を避ける', () => {
   }
 });
 
-test('pickType は金曜・土曜・日曜は invite が出やすい（1000 回で 2 割超）', () => {
-  let n = 0;
-  for (let i = 0; i < 1000; i++) if (pickType([], new Date('2026-10-30T03:00:00Z'), Math.random) === 'invite') n++; // 10/30 は金曜
-  expect(n).toBeGreaterThan(120); // 型が 13 に増えたので 3/19 くらい（他の型の 1.5〜3 倍）
+test('pickType は金曜・土曜・日曜は invite が平日の 2 倍くらい出やすい（2026-11-03 ゴルフは脇役なので割合そのものは小さい）', () => {
+  let fri = 0; let wed = 0; const N = 4000;
+  for (let i = 0; i < N; i++) if (pickType([], new Date('2026-10-30T03:00:00Z'), Math.random) === 'invite') fri++; // 10/30 は金曜
+  for (let i = 0; i < N; i++) if (pickType([], new Date('2026-10-28T03:00:00Z'), Math.random) === 'invite') wed++; // 10/28 は水曜
+  expect(fri).toBeGreaterThan(wed * 1.4);
+  expect(fri / N).toBeLessThan(0.15);
 });
 
 test('checkText: 500 字超・URL・NG 語・似すぎ・空は落ちる', () => {
@@ -146,11 +148,11 @@ test('写真なしの最低字数は 80 字（写真ありは 120 字）', async
 });
 
 describe('ゴルフ以外の型とタグ（2026-10-28 社長「ゴルフ以外の季節とか時事とか関係ない話も入れ込んで タグもつけてフォロワー増やしたいな」）', () => {
-  test('型に daily（日常）と news（時事）があり、ゴルフ以外が 3 回に 1 回くらい出る', () => {
+  test('型に daily（日常）と news（時事）があり、たまに出る（2026-11-03 ホノルル多めに移行してからは 1 割弱）', () => {
     expect(TYPES).toEqual(expect.arrayContaining(['daily', 'news']));
     let n = 0;
     for (let i = 0; i < 3000; i++) if (['daily', 'news'].includes(pickType([], new Date('2026-10-28T03:00:00Z'), Math.random))) n++;
-    expect(n).toBeGreaterThan(450); expect(n).toBeLessThan(1500);
+    expect(n).toBeGreaterThan(120); expect(n).toBeLessThan(600);
   });
 
   test('本文の最後の「タグ: xxx」を切り出す。# と . と & は落とし、50 字まで', async () => {
@@ -253,11 +255,15 @@ test('photoFits: 考える工程の分も出力枠に入るので max_tokens は
 });
 
 describe('人物像の追加（2026-10-28 本人「キラキラしてて楽しい感じ」「経営者らしく仕事も生きがい」「12月ホノルルマラソン」「パーソナルで細マッチョ」「ストイックだけど酒は飲みすぎ」）', () => {
-  test('型に work（仕事）と fitness（運動）があり、ゴルフ以外が半分くらい出る', () => {
+  test('型に work（仕事）と fitness（運動）があり、ゴルフの型（問いかけ・あるある・誘い・小ネタ）より多く出る（2026-11-03 ゴルフは脇役）', () => {
     expect(TYPES).toEqual(expect.arrayContaining(['work', 'fitness']));
-    let n = 0;
-    for (let i = 0; i < 3000; i++) if (['daily', 'news', 'work', 'fitness'].includes(pickType([], new Date('2026-10-28T03:00:00Z'), Math.random))) n++;
-    expect(n).toBeGreaterThan(1200); expect(n).toBeLessThan(1900);
+    let n = 0; let golf = 0;
+    for (let i = 0; i < 3000; i++) {
+      const t = pickType([], new Date('2026-10-28T03:00:00Z'), Math.random);
+      if (['daily', 'news', 'work', 'fitness'].includes(t)) n++;
+      if (['question', 'aruaru', 'invite', 'small'].includes(t)) golf++;
+    }
+    expect(n).toBeGreaterThan(golf);
   });
   test('system にマラソン・ジム・仕事の生きがい・飲みすぎ・キラキラ・生活感NG が入る', async () => {
     const a = fakeAnthropic([LONG]);

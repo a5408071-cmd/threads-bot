@@ -1,4 +1,4 @@
-const { createGrowth, DEFAULT_WEIGHTS } = require('../src/growth');
+const { createGrowth, DEFAULT_WEIGHTS, POLICY } = require('../src/growth');
 const { memoryStore } = require('../src/store');
 
 const NOW = new Date('2026-11-02T07:05:00+09:00'); // 月曜 7:05 JST
@@ -58,7 +58,7 @@ test('weekly: AI の答えが読めなければ配分は変えず、報告だけ
 test('weightsFor: 保存した配分が無ければ既定', async () => {
   const { growth, store } = mk();
   expect(await growth.weightsFor()).toEqual(DEFAULT_WEIGHTS);
-  await store.setConfig('strategy', { weights: { question: 9 } });
+  await store.setConfig('strategy', { policy: POLICY, weights: { question: 9 } }); // 今の方針の印つき（無ければ古い配分として既定に戻る＝honolulu.test.js）
   expect((await growth.weightsFor()).question).toBe(9);
 });
 

@@ -4,9 +4,14 @@
  */
 const persona = require('./persona');
 
-const TYPES = ['question', 'aruaru', 'invite', 'season', 'small', 'hook', 'work', 'fitness', 'daily', 'news', 'koyomi', 'tips']; // countdown はセルフカフェ公式だけ（2026-11-02 趣味アカウントは廃止）
+const TYPES = ['honolulu', 'board', 'question', 'aruaru', 'invite', 'season', 'small', 'hook', 'work', 'fitness', 'daily', 'news', 'koyomi', 'tips']; // countdown はセルフカフェ公式だけ（2026-11-02 趣味アカウントは廃止）
 const GOLF_TYPES = ['aruaru', 'season', 'small', 'hook']; // 問いかけと分け合うゴルフの型（invite は週末に増やす誘いなので触らない）
-const NON_GOLF = ['work', 'fitness', 'daily', 'news']; // ゴルフ以外（2026-10-28 社長「ゴルフ以外も」「経営者らしく」「マラソン・ジム」）。重みを 2 倍にして半分くらい
+/**
+ * 既定の配分（weights が無いとき。週次の分析の出発点でもある＝growth.js が同じものを使う）。
+ * 2026-11-03 社長「ゴルフの方で方向転換 初めてのホノルルを全力で楽しみたい為にサイトを公開した 掲示板書き込み待ってるキャラ」「ホノルル多めに移行」:
+ * ホノルル・掲示板・運動で 6 割、仕事・日常・時事・暦・コツ・季節・問いかけ締めで 3 割、ゴルフ（問いかけ・あるある・誘い）で 1 割ほど
+ */
+const DEFAULT_WEIGHTS = { honolulu: 6, board: 5, fitness: 4, work: 1, daily: 1, news: 1, koyomi: 1, tips: 1, season: 1, hook: 1, question: 1, aruaru: 1, invite: 1, small: 0 };
 // ウェブ検索で事実を確かめてから書く型（2026-10-29 社長「試験の残り何日」「暦」「継続のコツ へえーってなる」を追加）
 const SEARCH_TYPES = ['news', 'countdown', 'koyomi', 'tips', 'quote']; // countdown・quote（偉人の名言）は公式アカウントだけの型
 const COUNTDOWN_MAX_DAYS = 400;
@@ -69,11 +74,10 @@ function pickType(recentTypes = [], date = new Date(), rng = Math.random, weight
     if (!pool.length) for (const t of TYPES) { const w = Math.max(0, Math.round(Number(weights[t]) || 0)); for (let i = 0; i < w; i++) pool.push(t); }
   }
   if (!pool.length) {
-    pool = TYPES.filter((t) => !avoid.has(t));
+    for (const t of TYPES) { if (avoid.has(t)) continue; for (let i = 0; i < (DEFAULT_WEIGHTS[t] || 0); i++) pool.push(t); }
     if (!pool.length) pool = TYPES.slice();
     const wd = jstWeekday(date);
-    if ([5, 6, 0].includes(wd) && pool.includes('invite')) pool = [...pool, 'invite', 'invite']; // 金土日は誘い型を 3 倍に
-    for (const t of NON_GOLF) if (pool.includes(t)) pool = [...pool, t];
+    if ([5, 6, 0].includes(wd) && pool.includes('invite')) pool = [...pool, 'invite']; // 金土日は誘い型を 2 倍に
   }
   // ゴルフの投稿の中で問いかけが半分くらいになるよう配り直す（ゴルフ全体と、ゴルフ以外の割合は変えない。2026-11-03 社長「2択の問いかけ中心」）
   const w = new Map();
@@ -283,4 +287,4 @@ async function photoFits({ text, bytes, mediaType = 'image/jpeg', env = {}, anth
   }
 }
 
-module.exports = { userPrompt, pickType, checkText, writePost, photoFits, similarity, parseBanned, fillCountdown, TYPES, SEARCH_TYPES, MAX_CHARS, MIN_CHARS, LENGTH_BANDS, pickLength, DEFAULT_MODEL, DEFAULT_BANNED, MAX_TOKENS, FIT_MODEL };
+module.exports = { userPrompt, pickType, checkText, writePost, photoFits, similarity, parseBanned, fillCountdown, TYPES, DEFAULT_WEIGHTS, SEARCH_TYPES, MAX_CHARS, MIN_CHARS, LENGTH_BANDS, pickLength, DEFAULT_MODEL, DEFAULT_BANNED, MAX_TOKENS, FIT_MODEL };

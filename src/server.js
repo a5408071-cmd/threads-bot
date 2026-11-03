@@ -52,6 +52,12 @@ function createApp(deps = {}) {
     if (growth === null && deps.growth === undefined) growth = require('./growth').createGrowth({ threads: getThreads(), store: getStore(), notify: getNotify(), anthropic: getAnthropic(), env, now });
     return growth;
   };
+  // 掲示板のリンクを数日に 1 回、投稿の返信欄に添える（2026-11-03 方向転換）
+  let boardLink = deps.boardLink === undefined ? null : deps.boardLink;
+  const getBoardLink = () => {
+    if (boardLink === null && deps.boardLink === undefined) boardLink = require('./boardLink').createBoardLink({ store: getStore(), threads: getThreads(), env, now });
+    return boardLink;
+  };
   const getReplies = () => {
     if (replies === null && deps.replies === undefined) {
       try { replies = require('./replies').createReplies({ threads: getThreads(), store: getStore(), notify: getNotify(), now, anthropic: getAnthropic(), env }); } catch (e) { replies = null; }
@@ -118,7 +124,7 @@ function createApp(deps = {}) {
         return res.status(ec.length ? 500 : 200).json(rc);
       }
       const tick = deps.tick || require('./tick');
-      const r = await tick.runTick({ env, store: getStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: getNotify(), anthropic: getAnthropic(), now, mode, replies: getReplies(), photos: getPhotos(), stock: getStock(), growth: getGrowth(), forcePhoto: req.query.photo === '1', forcePost: mode === 'live' && req.query.post === '1', forceType: (mode !== 'live' || req.query.post === '1') && req.query.type ? String(req.query.type) : null });
+      const r = await tick.runTick({ env, store: getStore(), threads: getThreads(), writer: deps.writer || require('./writer'), notify: getNotify(), anthropic: getAnthropic(), now, mode, replies: getReplies(), photos: getPhotos(), stock: getStock(), growth: getGrowth(), boardLink: getBoardLink(), forcePhoto: req.query.photo === '1', forcePost: mode === 'live' && req.query.post === '1', forceType: (mode !== 'live' || req.query.post === '1') && req.query.type ? String(req.query.type) : null });
       // 予約投稿（趣味用）。時刻を過ぎたものを出す
       if (mode === 'live' && !(req.query.post === '1')) {
         try {
