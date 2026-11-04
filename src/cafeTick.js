@@ -53,10 +53,11 @@ function withLink(w) {
   let line = null;
   if ((w.type === 'newstore' || w.type === 'shop') && (w.storeUrl || w.announceUrl)) line = `▶ 店舗ページ ${w.storeUrl || w.announceUrl}`;
   else if (w.type === 'campaign' && (w.announceUrl || w.storeUrl)) line = `▶ 詳しくはこちら ${w.announceUrl || w.storeUrl}`;
+  else if (w.type === 'howto' || w.type === 'facility') line = `▶ 使い方はこちら ${G.usage.url}`; // 説明の回は毎回使い方のページへ（2026-11-04）
   else if (HP_MENTION_RE.test(w.text)) {
     // 2026-11-02 社長「サブスクの時はサブスクのページ 使い方の時は使い方ページ 全体の案内の場合はTOPページ」
     if (w.type === 'membership' || /サブスク|会員|月額/.test(w.text)) line = `▶ サブスクの詳細 ${G.membership.url}`;
-    else if (w.type === 'howto' || /使い方|利用方法|入り方/.test(w.text)) line = `▶ 使い方はこちら ${G.usage.url}`;
+    else if (w.type === 'howto' || w.type === 'facility' || /使い方|利用方法|入り方/.test(w.text)) line = `▶ 使い方はこちら ${G.usage.url}`;
     else line = `▶ 公式サイト ${G.top.url}`;
   }
   if (!line) return w;
@@ -69,8 +70,17 @@ const stripLink = (t) => String(t || '').replace(/\n*▶ [^\n]*https?:\/\/\S+\s*
 const GENERAL_FACTS = '今回は特定の店を紹介しない回です。店名・駅名・地名・エリア名は書かない。個室ブース・会議室・会員専用エリア・コピー機は店によって無いので書かない。全店共通の事実（ドリンク 1 杯で時間無制限・Wi-Fi・電源・無人・月額のサブスク）の範囲で書く。写真から店名や場所を書かない。';
 
 // 配分（weights）は毎日の見直し（cafeLearning）が決める。無ければ今までどおり均等＋仕事・勉強 2 倍
+// 使い方・設備の回（2026-11-04 社長「使い方とか設備の説明とかの投稿もたまにはいれてね」）: 直近 GUIDE_EVERY 本に無ければ配分に関係なく次はどちらか（5 本/日なのでほぼ 1 日 1 本）
+const GUIDE_TYPES = ['howto', 'facility'];
+const GUIDE_EVERY = 4;
 function pickCafeType(recentTypes, rng = Math.random, weights = null) {
-  const avoid = new Set((recentTypes || []).slice(0, 2));
+  const recent = recentTypes || [];
+  if (recent.length >= GUIDE_EVERY && !recent.slice(0, GUIDE_EVERY).some((x) => GUIDE_TYPES.includes(x))) {
+    // 久しく出ていない方（直近で先に見つかる方の反対）。どちらも見当たらなければ facility
+    const last = recent.find((x) => GUIDE_TYPES.includes(x));
+    return last === 'facility' ? 'howto' : 'facility';
+  }
+  const avoid = new Set(recent.slice(0, 2));
   if (weights && typeof weights === 'object') {
     const bag = (skip) => personaCafe.TYPES.filter((t) => !skip.has(t)).flatMap((t) => Array(Math.max(0, Math.round(Number(weights[t]) || 0))).fill(t));
     const pool = bag(avoid).length ? bag(avoid) : bag(new Set());

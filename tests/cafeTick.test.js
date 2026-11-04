@@ -549,3 +549,25 @@ describe('既存店の紹介（2026-11-02 社長「新店舗終わったら既�
     expect(d.writer.writePost.mock.calls[0][0].type).not.toBe('shop');
   });
 });
+
+describe('使い方・設備の回（2026-11-04 社長「全店の投稿がこんな席に座って…みたいな形ばっかり 使い方とか設備の説明とかの投稿もたまにはいれてね」）', () => {
+  const persona = require('../src/personaCafe');
+  test('型に facility（設備の説明）がある。howto と facility は場面・写真の席から書き出さない指示', () => {
+    expect(persona.TYPES).toContain('facility');
+    expect(persona.TYPE_GUIDE.facility).toMatch(/Wi-Fi/);
+    for (const t of ['howto', 'facility']) expect(persona.TYPE_GUIDE[t]).toMatch(/書き出さない/);
+  });
+  test('直近 4 本に howto・facility が無ければ、配分に関係なく次はどちらか。久しく出ていない方を選ぶ', () => {
+    const W = { work: 5, howto: 0, facility: 0 };
+    expect(pickCafeType(['work', 'season', 'shop', 'study'], () => 0.5, W)).toBe('facility'); // どちらも無い→ facility（直近 10 本にも無い）
+    expect(pickCafeType(['work', 'season', 'shop', 'study', 'facility'], () => 0.5, W)).toBe('howto'); // 5 本前に facility → howto
+    expect(pickCafeType(['work', 'howto', 'shop', 'study'], () => 0.5, W)).toBe('work'); // 直近 4 本にあれば配分どおり
+  });
+  test('使い方・設備の回には使い方のページのリンクが付く', async () => {
+    const d = deps({ now: at('11:20') });
+    d.writer.writePost = jest.fn(async () => ({ ok: true, text: 'Wi-Fiと電源はどの席でも使えます。', type: 'facility', attempts: 1 }));
+    await d.store.setToken(TOKEN);
+    await runCafeTick(d);
+    expect(d.threads.publishPost.mock.calls[0][0].text).toMatch(/\n▶ 使い方はこちら https:\/\/selfcafe\.jp\/usage\/$/);
+  });
+});
