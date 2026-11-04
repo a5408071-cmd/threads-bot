@@ -294,3 +294,16 @@ test('publishPost: imageUrls が 1 枚だけなら普通の写真投稿', async 
   await t.publishPost({ token: 'tk', userId: 'u1', text: 'x', imageUrls: ['https://a/1.jpg'] });
   expect(h.calls[0].opts).toMatchObject({ media_type: 'IMAGE', image_url: 'https://a/1.jpg' });
 });
+
+test('listConversation は replied_to・root_post も頼み、paging.next を追って平らに返す（2026-11-04 返信への返信）', async () => {
+  const h = http([
+    { match: /\/m1\/conversation$/, reply: { data: [{ id: 'r1', text: 'a', username: 'bob', timestamp: 't', permalink: 'p1', is_reply_owned_by_me: false, replied_to: { id: 'm1' }, root_post: { id: 'm1' } }], paging: { next: 'https://graph.threads.net/v1.0/m1/conversation?after=abc' } } },
+    { match: /after=abc/, reply: { data: [{ id: 'r2', text: 'b', username: 'bob', timestamp: 't', permalink: 'p2', is_reply_owned_by_me: true, replied_to: { id: 'r1' }, root_post: { id: 'm1' } }] } },
+  ]);
+  const t = createThreads({ http: h, env: {}, sleep: noSleep });
+  const r = await t.listConversation({ token: 'tk', mediaId: 'm1' });
+  expect(h.calls[0].opts.fields).toBe('id,text,username,timestamp,permalink,is_reply_owned_by_me,replied_to,root_post');
+  expect(h.calls[0].opts.limit).toBe(100);
+  expect(r.map((x) => x.id)).toEqual(['r1', 'r2']);
+  expect(r[1]).toMatchObject({ is_reply_owned_by_me: true, replied_to: { id: 'r1' }, root_post: { id: 'm1' } });
+});

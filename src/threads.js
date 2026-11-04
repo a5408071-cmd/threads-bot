@@ -151,6 +151,23 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
     return (r.data || []).map((x) => ({ id: x.id, text: x.text, username: x.username, timestamp: x.timestamp, permalink: x.permalink, is_reply_owned_by_me: Boolean(x.is_reply_owned_by_me) }));
   }
 
+  /**
+   * 会話全体（投稿直下のコメントに加えて、返信への返信も平らに並べたもの）。公式 GET /{media-id}/conversation。
+   * replied_to（親の ID）と root_post（元の投稿）が付く。ページ送りは paging.next を最大 5 ページ追う（1 ページ 100 件）
+   */
+  async function listConversation({ token, mediaId }) {
+    const fields = 'id,text,username,timestamp,permalink,is_reply_owned_by_me,replied_to,root_post';
+    const out = [];
+    let r = await get(`/${mediaId}/conversation`, { fields, access_token: token, limit: 100 });
+    for (let page = 0; r && page < 5; page++) {
+      for (const x of r.data || []) out.push({ id: x.id, text: x.text, username: x.username, timestamp: x.timestamp, permalink: x.permalink, is_reply_owned_by_me: Boolean(x.is_reply_owned_by_me), replied_to: x.replied_to ? { id: String(x.replied_to.id) } : null, root_post: x.root_post ? { id: String(x.root_post.id) } : null });
+      const next = r.paging && r.paging.next;
+      if (!next) break;
+      r = (await client.get(next, { timeout: HTTP_TIMEOUT_MS })).data;
+    }
+    return out;
+  }
+
   /** 公開投稿のキーワード検索（threads_keyword_search。審査前は自分の投稿しか返らない） */
   async function keywordSearch({ token, q, type = 'RECENT' }) {
     const r = await get('/keyword_search', { q, search_type: type, fields: 'id,text,username,permalink,timestamp,media_type,has_replies,is_reply', access_token: token });
@@ -205,7 +222,7 @@ function createThreads({ http, env = process.env, now = () => new Date(), sleep 
     return u.toString();
   }
 
-  return { publishPost, publishReply, userInsights, postInsights, keywordSearch, exchangeCode, refreshToken, listMyPosts, listReplies, authorizeUrl, whoAmI };
+  return { publishPost, publishReply, userInsights, postInsights, keywordSearch, exchangeCode, refreshToken, listMyPosts, listReplies, listConversation, authorizeUrl, whoAmI };
 }
 
 module.exports = { createThreads, BASE, SCOPES, metaError };

@@ -285,3 +285,126 @@ test('投稿に replyTone があれば、そのコメントの返事の調子と
   await replies.poll({ token: 'tk', userId: 'u1' });
   expect(JSON.stringify(anthropic.messages.create.mock.calls[0][0])).toMatch(/短文でさわやかに元気よく感謝を伝える/);
 });
+
+describe('返信への返信も拾う（2026-11-04 社長「返信に返信して、さらに返信きたやつが無視になっちゃってる」）', () => {
+  // conversation: 投稿直下（replied_to=投稿）と、自分の返事への返事（replied_to=自分の返信）と、他人同士のやりとり（replied_to=他人の返信）
+  const CONV = [
+    { id: 'r1', text: '平日行けます！', username: 'bob', timestamp: 't1', permalink: 'pr1', is_reply_owned_by_me: false, replied_to: { id: 'm1' }, root_post: { id: 'm1' } },
+    { id: 'mine1', text: 'ありがとうございます！ぜひ！', username: 'me', timestamp: 't2', permalink: 'pm1', is_reply_owned_by_me: true, replied_to: { id: 'r1' }, root_post: { id: 'm1' } },
+    { id: 'r2', text: '来週の水曜どうですか？', username: 'bob', timestamp: 't3', permalink: 'pr2', is_reply_owned_by_me: false, replied_to: { id: 'mine1' }, root_post: { id: 'm1' } },
+    { id: 'r3', text: '私も行きたい（bobさんへ）', username: 'carol', timestamp: 't4', permalink: 'pr3', is_reply_owned_by_me: false, replied_to: { id: 'r1' }, root_post: { id: 'm1' } },
+  ];
+  function mkConv({ conv = CONV, withListReplies = false } = {}) {
+    const store = memoryStore({ now: () => NOW });
+    const threads = {
+      listMyPosts: jest.fn(async () => [P1]),
+      listConversation: jest.fn(async () => conv),
+      publishReply: jest.fn(async () => ({ ok: true, mediaId: 'rep', permalink: 'prep' })),
+      ...(withListReplies ? { listReplies: jest.fn(async () => conv.filter((c) => c.replied_to.id === 'm1')) } : {}),
+    };
+    const notify = { owner: jest.fn(async () => ({ ok: true })) };
+    const anthropic = { messages: { create: jest.fn(async () => ({ content: [{ type: 'text', text: '水曜いいですね！' }], stop_reason: 'end_turn' })) } };
+    const replies = createReplies({ threads, store, notify, now: () => NOW, anthropic, env: { THREADS_AUTO_REPLY: 'true' } });
+    return { replies, threads, notify, anthropic, store };
+  }
+  test('会話全体（conversation）を読み、自分の返事への返事にも返す。他人同士のやりとりには返さず既読にする', async () => {
+    const { replies, threads, anthropic, store } = mkConv();
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    const r = await replies.poll({ token: 'tk', userId: 'u1' });
+    expect(threads.listConversation).toHaveBeenCalledWith({ token: 'tk', mediaId: 'm1' });
+    const to = threads.publishReply.mock.calls.map((c) => c[0].replyToId).sort();
+    expect(to).toEqual(['r1', 'r2']); // mine1 は自分、r3 は他人への返事
+    expect(r.replied).toBe(2);
+    expect(await store.seenReply('r3')).toBeTruthy();
+    expect(await store.seenReply('mine1')).toBeFalsy();
+  });
+  test('自分の返事への返事には、直前の自分の返事を AI に渡す（話の続きとして返す）', async () => {
+    const { replies, anthropic, store } = mkConv();
+    await store.setConfig('repliesInitialized', { at: 'x' });
+    await replies.poll({ token: 'tk', userId: 'u1' });
+    const prompts = anthropic.messages.create.mock.calls.map((c) => JSON.stringify(c[0]));
+    const p2 = prompts.find((p) => /来週の水曜/.test(p));
+    expect(p2).toMatch(/ありがとうございます！ぜひ！/);
+    expect(p2).toMatch(/自分の前の返事/);
+    const p1 = prompts.find((p) => /平日行けます/.test(p));
+    expect(p1).not.toMatch(/自分の前の返事/);
+  });
+  test('listConversation が無い・失敗したら listReplies に戻る', async () => {
+    const d = mkConv({ withListReplies: true });
+    d.threads.listConversation.mockImplementation(async () => { throw new Error('boom'); });
+    await d.store.setConfig('repliesInitialized', { at: 'x' });
+    const r = await d.replies.poll({ token: 'tk', userId: 'u1' });
+    expect(d.threads.listReplies).toHaveBeenCalled();
+    expect(r.errors).toEqual([]);
+    expect(d.threads.publishReply.mock.calls.map((c) => c[0].replyToId)).toEqual(['r1']);
+  });
+});
+
+describe('返信への返信の歯止め（2026-11-04 レビュー指摘）', () => {
+  const base = { username: 'bob', timestamp: '2026-10-28T00:00:00+0000', is_reply_owned_by_me: false, root_post: { id: 'm1' } };
+  const mine = (id, to) => ({ ...base, id, text: `返事${id}`, username: 'me', is_reply_owned_by_me: true, replied_to: { id: to } });
+  function mkConv(conv, env = {}) {
+    const store = memoryStore({ now: () => NOW });
+    const threads = {
+      listMyPosts: jest.fn(async () => [P1]),
+      listConversation: jest.fn(async () => conv),
+      listReplies: jest.fn(async () => conv.filter((c) => c.replied_to && c.replied_to.id === 'm1' && !c.is_reply_owned_by_me)),
+      publishReply: jest.fn(async () => ({ ok: true, mediaId: 'rep', permalink: 'prep' })),
+    };
+    const notify = { owner: jest.fn(async () => ({ ok: true })) };
+    const anthropic = { messages: { create: jest.fn(async () => ({ content: [{ type: 'text', text: 'そうですね！' }], stop_reason: 'end_turn' })) } };
+    const replies = createReplies({ threads, store, notify, now: () => NOW, anthropic, env: { THREADS_AUTO_REPLY: 'true', ...env } });
+    return { replies, threads, notify, anthropic, store };
+  }
+  test('自分の返事が 3 段続いた相手には返さない（既読にして知らせには「やりとり上限」）', async () => {
+    const conv = [
+      { ...base, id: 'r1', text: '1', replied_to: { id: 'm1' } }, mine('a1', 'r1'),
+      { ...base, id: 'r2', text: '2', replied_to: { id: 'a1' } }, mine('a2', 'r2'),
+      { ...base, id: 'r3', text: '3', replied_to: { id: 'a2' } }, mine('a3', 'r3'),
+      { ...base, id: 'r4', text: '4', replied_to: { id: 'a3' } },
+    ];
+    const d = mkConv(conv);
+    await d.store.setConfig('repliesInitialized', { at: 'x' });
+    for (const id of ['r1', 'r2', 'r3']) await d.store.markReplySeen(id, { replied: true });
+    const r = await d.replies.poll({ token: 'tk', userId: 'u1' });
+    expect(d.threads.publishReply).not.toHaveBeenCalled();
+    expect(r.newReplies).toBe(1);
+    expect(d.notify.owner.mock.calls[0][0]).toMatch(/やりとり上限/);
+    expect(await d.store.seenReply('r4')).toBeTruthy();
+  });
+  test('replied_to が 1 件も無い（会話の形が取れていない）ときは従来の投稿直下だけに戻す', async () => {
+    const conv = [{ ...base, id: 'r1', text: '1', replied_to: null }, { ...base, id: 'r2', text: '2', replied_to: null, username: 'carol' }];
+    const d = mkConv(conv.map((c) => ({ ...c, replied_to: undefined })));
+    d.threads.listReplies.mockImplementation(async () => [{ ...base, id: 'r1', text: '1' }]);
+    await d.store.setConfig('repliesInitialized', { at: 'x' });
+    await d.replies.poll({ token: 'tk', userId: 'u1' });
+    expect(d.threads.listReplies).toHaveBeenCalled();
+    expect(d.threads.publishReply.mock.calls.map((c) => c[0].replyToId)).toEqual(['r1']);
+  });
+  test('親が一覧に無い返事は既読にせず errors に残す（消えないように）', async () => {
+    const d = mkConv([{ ...base, id: 'r9', text: 'x', replied_to: { id: 'gone' } }]);
+    await d.store.setConfig('repliesInitialized', { at: 'x' });
+    const r = await d.replies.poll({ token: 'tk', userId: 'u1' });
+    expect(await d.store.seenReply('r9')).toBeFalsy();
+    expect(r.errors.join()).toMatch(/親/);
+  });
+  test('自分の返事への返事が 2 日より古いものは、返さずに既読にする（切り替え直後に古い会話へまとめて返さない）', async () => {
+    const old = '2026-10-20T00:00:00+0000';
+    const d = mkConv([{ ...base, id: 'r1', text: '1', replied_to: { id: 'm1' }, timestamp: old }, mine('a1', 'r1'), { ...base, id: 'r2', text: '2', replied_to: { id: 'a1' }, timestamp: old }]);
+    await d.store.setConfig('repliesInitialized', { at: 'x' });
+    await d.store.markReplySeen('r1', { replied: true });
+    const r = await d.replies.poll({ token: 'tk', userId: 'u1' });
+    expect(d.threads.publishReply).not.toHaveBeenCalled();
+    expect(r.newReplies).toBe(0);
+    expect(await d.store.seenReply('r2')).toBeTruthy();
+  });
+  test('続きの返事には HP のリンク案内を付けない（公式アカウント）', async () => {
+    const d = mkConv([{ ...base, id: 'r1', text: '1', replied_to: { id: 'm1' } }, mine('a1', 'r1'), { ...base, id: 'r2', text: '値段は？', replied_to: { id: 'a1' } }]);
+    const guided = createReplies({ threads: d.threads, store: d.store, notify: d.notify, now: () => NOW, anthropic: d.anthropic, env: { THREADS_AUTO_REPLY: 'true' }, guideLinks: { top: { url: 'https://selfcafe.jp/', label: 'トップ' } } });
+    await d.store.setConfig('repliesInitialized', { at: 'x' });
+    await d.store.markReplySeen('r1', { replied: true });
+    await guided.poll({ token: 'tk', userId: 'u1' });
+    const p = JSON.stringify(d.anthropic.messages.create.mock.calls[0][0]);
+    expect(p).toMatch(/値段は/); expect(p).not.toMatch(/LINK:top/);
+  });
+});

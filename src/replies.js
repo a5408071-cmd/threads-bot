@@ -11,10 +11,15 @@ const LOOKBACK_DAYS = 7;
 const TEXT_MAX = 100;
 const REPLY_MAX = 200;
 const REPLY_MODEL = 'claude-opus-5-5';
+const DEFAULT_MAX_DEPTH = 3; // 自分の返事が 3 段続いたら、その先は返さない（相手がボットでも無限に続かない）
+const DEFAULT_NESTED_MAX_AGE_H = 48;
 
 function createReplies({ threads, store, notify, now = () => new Date(), anthropic = null, env = process.env, persona: P = persona, label = '', guideLinks = null, site = null }) {
   const cut = (s, n = TEXT_MAX) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n)}…` : t; };
   const autoReply = () => env.THREADS_AUTO_REPLY === 'true' && Boolean(anthropic);
+  // 返信への返信（2026-11-04）: 自分の返事が maxDepth 段続いたやりとりは止める。切り替え直後に古い会話へ返さないよう、自分の返事への返事は nestedMaxAgeMs より新しいものだけ
+  const maxDepth = Math.max(1, Number(env.THREADS_REPLY_MAX_DEPTH) || DEFAULT_MAX_DEPTH);
+  const nestedMaxAgeMs = (Number(env.THREADS_NESTED_MAX_AGE_H) || DEFAULT_NESTED_MAX_AGE_H) * 3600000;
 
   /**
    * 公式: 案内先の一覧（キー→{url,label}）。特定の店のページ（store）は、コメントに店名があればその店（店舗一覧から引く）、
@@ -54,7 +59,7 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
 
   /** コメントへの返事を AI に書かせる。SKIP なら null */
   async function draftReply({ comment, post }) {
-    const links = await linksFor(post, comment);
+    const links = comment.parentMine != null ? null : await linksFor(post, comment); // 続きの返事には HP の案内を付けない（会話が宣伝っぽくならないように）
     const guide = links ? [
       '',
       '質問（料金・営業時間・場所・使い方・サブスク・予約など）や、事実が分からず答えにくいコメントには、分かる範囲でひと言答え、最後に「[LINK:キー]」を 1 つだけ付けて HP へ案内する（数字・営業時間・設備は書かずリンクに任せる）。',
@@ -76,6 +81,8 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
         ...guide,
         '',
         `自分の投稿: ${cut(post && post.text, 300)}`,
+        // 自分の返事への返事（2026-11-04 社長「返信に返信して、さらに返信きたやつが無視になっちゃってる」）: 話の続きとして返す
+        ...(comment.parentMine ? [`自分の前の返事: ${cut(comment.parentMine, 300)}`, '（このコメントは上の自分の返事への返事。同じ話の続きとして、繰り返さずに答える）'] : []),
         `コメント（@${comment.username || '?'}）: ${cut(comment.text, 300)}`,
         '',
         '返事の本文だけを返す（「返事:」などの見出し・引用符なし）。',
@@ -99,19 +106,47 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
     const fresh = [];
     for (const p of posts) {
       out.checked++;
-      let list;
-      try {
-        list = await threads.listReplies({ token, mediaId: p.id });
-      } catch (e) {
-        out.errors.push(`投稿 ${p.id} の返信が読めない: ${e.message}`);
-        continue;
+      // 会話全体（返信への返信まで）を読む。conversation が使えなければ投稿直下だけ（従来）
+      let list; let flat = false;
+      if (threads.listConversation) {
+        try { list = await threads.listConversation({ token, mediaId: p.id }); flat = true; } catch (e) { console.warn(`[threads] CONVERSATION_FAILED ${p.id} ${e.message}`); }
       }
+      if (!list) {
+        try {
+          list = await threads.listReplies({ token, mediaId: p.id });
+        } catch (e) {
+          out.errors.push(`投稿 ${p.id} の返信が読めない: ${e.message}`);
+          continue;
+        }
+      }
+      // 会話の形（replied_to）が 1 件も取れていなければ conversation は使えないとみなし、従来の投稿直下だけに戻す（他人同士のやりとりに返さないため）
+      if (flat && list.length && !list.some((x) => x && x.replied_to && x.replied_to.id)) {
+        console.warn(`[threads] CONVERSATION_NO_PARENT ${p.id} n=${list.length} → replies に戻す`);
+        try { list = await threads.listReplies({ token, mediaId: p.id }); flat = false; } catch (e) { out.errors.push(`投稿 ${p.id} の返信が読めない: ${e.message}`); continue; }
+      }
+      const byId = new Map(list.filter((x) => x && x.id).map((x) => [String(x.id), x]));
+      const isMine = (x) => Boolean(x && (x.is_reply_owned_by_me || (x.from && String(x.from.id) === String(userId))));
+      const seen = async (r, extra) => { try { await store.markReplySeen(r.id, { postId: p.id, username: r.username, text: cut(r.text), notified: false, ...extra }); } catch (e) { console.warn(`[threads] REPLY_SEEN_FAILED ${r.id} ${e.message}`); } };
+      // 自分の返事が何段続いているか（やりとりの深さ）。親をたどって自分の返事を数える
+      const myDepth = (r) => { let n = 0; let cur = r; for (let i = 0; i < 50 && cur && cur.replied_to; i++) { cur = byId.get(String(cur.replied_to.id)); if (cur && isMine(cur)) n++; } return n; };
       for (const r of list) {
         if (!r || !r.id) continue;
-        if (r.is_reply_owned_by_me || (r.from && String(r.from.id) === String(userId))) continue; // 自分の返信
+        if (isMine(r)) continue; // 自分の返信
         if (await store.seenReply(r.id)) continue;
+        // 返事をするのは「投稿へのコメント」と「自分の返事への返事」だけ。他人同士のやりとり（他人のコメントへの返事）は既読にして流す
+        let parentMine = null; let limitReached = false;
+        if (flat && r.replied_to && String(r.replied_to.id) !== String(p.id)) {
+          const parent = byId.get(String(r.replied_to.id));
+          if (!parent) { out.errors.push(`返信 ${r.id} の親（${r.replied_to.id}）が会話の一覧に無い（消えた・多すぎて切れた）`); continue; } // 既読にしない＝次回また見る
+          if (!isMine(parent)) { await seen(r, { skipped: 'other-thread' }); continue; }
+          // 切り替え直後に古い会話へまとめて返さない（自分の返事への返事は NESTED_MAX_AGE_H より新しいものだけ）
+          const ts = r.timestamp ? new Date(r.timestamp).getTime() : NaN;
+          if (Number.isFinite(ts) && now().getTime() - ts > nestedMaxAgeMs) { await seen(r, { skipped: 'stale' }); continue; }
+          parentMine = parent.text || '（本文なし）';
+          if (myDepth(r) >= maxDepth) limitReached = true; // 自分の返事が maxDepth 段続いたやりとりはここで止める（無限のやりとり防止）
+        }
         // ふだんの回の storeUrl は写真の店（話と関係ない）なので渡さない
-        { const m = mine.get(p.id) || {}; fresh.push({ ...r, post: { ...p, text: m.text || '', storeUrl: m.storeName ? m.storeUrl : undefined, storeName: m.storeName, replyTone: m.replyTone } }); }
+        { const m = mine.get(p.id) || {}; fresh.push({ ...r, parentMine, limitReached, post: { ...p, text: m.text || '', storeUrl: m.storeName ? m.storeUrl : undefined, storeName: m.storeName, replyTone: m.replyTone } }); }
       }
     }
     out.newReplies = fresh.length;
@@ -131,6 +166,7 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
     if (autoReply()) {
       for (const r of fresh) {
         let text = null;
+        if (r.limitReached) { answers.set(r.id, null); continue; }
         try { text = await draftReply({ comment: r, post: r.post }); } catch (e) { out.errors.push(`返事の生成に失敗（${r.id}）: ${e.message}`); }
         if (!text) { answers.set(r.id, null); continue; }
         const pub = await threads.publishReply({ token, userId, text, replyToId: r.id });
@@ -144,7 +180,7 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
       lines.push(`・@${r.username || '?'}「${cut(r.text)}」`);
       if (autoReply()) {
         const a = answers.get(r.id);
-        lines.push(a ? `  ↩ ${cut(a.text, 120)}` : '  ↩ （返事なし）');
+        lines.push(a ? `  ↩ ${cut(a.text, 120)}` : r.limitReached ? `  ↩ （返事なし・やりとり上限 ${maxDepth} 段。続けるなら社長が手で）` : '  ↩ （返事なし）');
       }
       lines.push(`  → ${r.post.permalink || r.permalink || ''}`);
     }
