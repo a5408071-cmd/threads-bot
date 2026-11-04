@@ -408,3 +408,23 @@ describe('返信への返信の歯止め（2026-11-04 レビュー指摘）', ()
     expect(p).toMatch(/値段は/); expect(p).not.toMatch(/LINK:top/);
   });
 });
+
+test('一人参加・不安のコメントには「自分も初めて・現地で会いたい・いつから滞在？」の指示が prompt に入る（2026-11-04 社長）。公式アカウントには入らない', async () => {
+  const store = memoryStore({ now: () => NOW });
+  const threads = {
+    listMyPosts: jest.fn(async () => [P1]),
+    listReplies: jest.fn(async () => [{ id: 'r1', text: '一人で参加なので不安です…', username: 'bob', timestamp: 't', permalink: 'pr1', is_reply_owned_by_me: false }]),
+    publishReply: jest.fn(async () => ({ ok: true })),
+  };
+  const notify = { owner: jest.fn(async () => ({ ok: true })) };
+  const anthropic = { messages: { create: jest.fn(async () => ({ content: [{ type: 'text', text: '自分も初めてです！ぜひ現地で会いましょう。いつから滞在予定ですか？' }], stop_reason: 'end_turn' })) } };
+  const hobby = createReplies({ threads, store, notify, now: () => NOW, anthropic, env: { THREADS_AUTO_REPLY: 'true' } });
+  await store.setConfig('repliesInitialized', { at: 'x' });
+  await hobby.poll({ token: 'tk', userId: 'u1' });
+  const p = JSON.stringify(anthropic.messages.create.mock.calls[0][0]);
+  for (const w of ['自分も初めて', '現地で会', 'いつから滞在', '12/7', '12/14', 'ゴルフ']) expect(p).toContain(w);
+  const cafe = createReplies({ threads, store: memoryStore({ now: () => NOW }), notify, now: () => NOW, anthropic, env: { THREADS_AUTO_REPLY: 'true' }, persona: require('../src/personaCafe') });
+  anthropic.messages.create.mockClear();
+  await cafe.draftReply({ comment: { text: '不安です', username: 'x' }, post: { text: 't' } });
+  expect(JSON.stringify(anthropic.messages.create.mock.calls[0][0])).not.toContain('いつから滞在');
+});
