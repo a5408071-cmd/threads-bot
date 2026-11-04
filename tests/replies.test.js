@@ -422,7 +422,7 @@ test('一人参加・不安のコメントには「自分も初めて・現地�
   await store.setConfig('repliesInitialized', { at: 'x' });
   await hobby.poll({ token: 'tk', userId: 'u1' });
   const p = JSON.stringify(anthropic.messages.create.mock.calls[0][0]);
-  for (const w of ['自分も初めて', '現地で会', 'いつから滞在', '12/7', '12/14', 'ゴルフ']) expect(p).toContain(w);
+  for (const w of ['自分も初めて', '現地で会', 'いつから滞在', '12/7', '12/14', 'ゴルフ', '掲示板', '励まし']) expect(p).toContain(w); // 2026-11-04 社長「1人には積極的に掲示板おススメしてみんなで励ましあっていこう」
   const cafe = createReplies({ threads, store: memoryStore({ now: () => NOW }), notify, now: () => NOW, anthropic, env: { THREADS_AUTO_REPLY: 'true' }, persona: require('../src/personaCafe') });
   anthropic.messages.create.mockClear();
   await cafe.draftReply({ comment: { text: '不安です', username: 'x' }, post: { text: 't' } });
