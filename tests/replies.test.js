@@ -428,3 +428,24 @@ test('一人参加・不安のコメントには「自分も初めて・現地�
   await cafe.draftReply({ comment: { text: '不安です', username: 'x' }, post: { text: 't' } });
   expect(JSON.stringify(anthropic.messages.create.mock.calls[0][0])).not.toContain('いつから滞在');
 });
+
+test('直近の自分の返事（最大 6 件）を prompt に渡して同じ言い回しを避けさせ、返したあと記録する（2026-11-04 レビュー指摘）', async () => {
+  const store = memoryStore({ now: () => NOW });
+  await store.setConfig('recentAnswers', { texts: ['自分も初めてです！ぜひ現地で会いましょう。いつから滞在予定ですか？'] });
+  const threads = {
+    listMyPosts: jest.fn(async () => [P1]),
+    listReplies: jest.fn(async () => [{ id: 'r1', text: '一人参加で不安', username: 'bob', timestamp: 't', permalink: 'pr1', is_reply_owned_by_me: false }, { id: 'r2', text: '楽しみ！', username: 'carol', timestamp: 't', permalink: 'pr2', is_reply_owned_by_me: false }]),
+    publishReply: jest.fn(async () => ({ ok: true })),
+  };
+  const notify = { owner: jest.fn(async () => ({ ok: true })) };
+  let n = 0;
+  const anthropic = { messages: { create: jest.fn(async () => ({ content: [{ type: 'text', text: `返事${++n}` }], stop_reason: 'end_turn' })) } };
+  const replies = createReplies({ threads, store, notify, now: () => NOW, anthropic, env: { THREADS_AUTO_REPLY: 'true' } });
+  await store.setConfig('repliesInitialized', { at: 'x' });
+  await replies.poll({ token: 'tk', userId: 'u1' });
+  const p1 = JSON.stringify(anthropic.messages.create.mock.calls[0][0]);
+  expect(p1).toMatch(/直近の自分の返事/); expect(p1).toMatch(/いつから滞在予定ですか/);
+  const p2 = JSON.stringify(anthropic.messages.create.mock.calls[1][0]);
+  expect(p2).toMatch(/返事1/); // 同じ見回りの中で書いた返事も次の prompt に入る
+  expect((await store.getConfig('recentAnswers')).texts).toEqual(['返事2', '返事1', '自分も初めてです！ぜひ現地で会いましょう。いつから滞在予定ですか？']);
+});

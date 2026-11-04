@@ -13,6 +13,7 @@ const REPLY_MAX = 200;
 const REPLY_MODEL = 'claude-opus-5-5';
 const DEFAULT_MAX_DEPTH = 3; // 自分の返事が 3 段続いたら、その先は返さない（相手がボットでも無限に続かない）
 const DEFAULT_NESTED_MAX_AGE_H = 48;
+const RECENT_ANSWERS = 6; // 直近の自分の返事を prompt に見せる数（言い回しの繰り返し防止）
 
 function createReplies({ threads, store, notify, now = () => new Date(), anthropic = null, env = process.env, persona: P = persona, label = '', guideLinks = null, site = null }) {
   const cut = (s, n = TEXT_MAX) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n)}…` : t; };
@@ -58,7 +59,7 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
   }
 
   /** コメントへの返事を AI に書かせる。SKIP なら null */
-  async function draftReply({ comment, post }) {
+  async function draftReply({ comment, post, recent = [] }) {
     const links = comment.parentMine != null ? null : await linksFor(post, comment); // 続きの返事には HP の案内を付けない（会話が宣伝っぽくならないように）
     const guide = links ? [
       '',
@@ -74,7 +75,9 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
       output_config: { effort: 'low' },
       system: P.SYSTEM,
       messages: [{ role: 'user', content: [
-        '自分の投稿に次のコメントが付きました。本人として、短い返事（1〜2 文、80 字以内。絵文字は 0〜1 個）を書いてください。',
+        '自分の投稿に次のコメントが付きました。本人として、短い返事（1〜2 文、100 字以内。絵文字は 0〜1 個）を書いてください。',
+        // 直近の自分の返事を見せて、同じ言い回し・同じ締めを避けさせる（呼び出しごとに独立なので渡さないと毎回同じ文に寄る＝2026-11-04 レビュー）
+        ...(recent.length ? ['直近の自分の返事（同じ言い回し・同じ締め・同じ問いを繰り返さない。問いで終わるのは続けて 2 回まで）:', ...recent.map((t) => `  - ${cut(t, 120)}`)] : []),
         '相手の名前は書かない。感謝・共感・軽い問い返し・誘いへの前向きな返事。自分の投稿の繰り返しや宣伝はしない。',
         '営業・勧誘・スパム・荒らし・意味の分からないコメント・返事が不要な一言（スタンプだけ等）なら「SKIP」とだけ答える。',
         ...(post && post.replyTone ? [`この投稿へのコメントの返事の調子（投稿者の指定。これを優先）: ${post.replyTone}`] : []),
@@ -165,15 +168,20 @@ function createReplies({ threads, store, notify, now = () => new Date(), anthrop
     // 自動の返事
     const answers = new Map(); // replyId → { text, permalink } | null
     if (autoReply()) {
+      // 直近の自分の返事（threads_config/recentAnswers。新しい順・最大 RECENT_ANSWERS 件）。読めなくても返事は止めない
+      let recent = [];
+      try { const c = await store.getConfig('recentAnswers'); recent = Array.isArray(c && c.texts) ? c.texts.filter((t) => typeof t === 'string').slice(0, RECENT_ANSWERS) : []; } catch (e) { console.warn(`[threads] RECENT_ANSWERS_READ_FAILED ${e.message}`); }
+      const before = recent.length;
       for (const r of fresh) {
         let text = null;
         if (r.limitReached) { answers.set(r.id, null); continue; }
-        try { text = await draftReply({ comment: r, post: r.post }); } catch (e) { out.errors.push(`返事の生成に失敗（${r.id}）: ${e.message}`); }
+        try { text = await draftReply({ comment: r, post: r.post, recent }); } catch (e) { out.errors.push(`返事の生成に失敗（${r.id}）: ${e.message}`); }
         if (!text) { answers.set(r.id, null); continue; }
         const pub = await threads.publishReply({ token, userId, text, replyToId: r.id });
-        if (pub.ok) { answers.set(r.id, { text, permalink: pub.permalink }); out.replied++; console.log(`[threads] AUTO_REPLIED to=${r.id}`); }
+        if (pub.ok) { answers.set(r.id, { text, permalink: pub.permalink }); out.replied++; recent = [text, ...recent].slice(0, RECENT_ANSWERS); console.log(`[threads] AUTO_REPLIED to=${r.id}`); }
         else { answers.set(r.id, null); out.errors.push(`返事の投稿に失敗（${r.id}）: ${pub.error}`); }
       }
+      if (out.replied || recent.length !== before) { try { await store.setConfig('recentAnswers', { texts: recent, updatedAt: now().toISOString() }); } catch (e) { console.warn(`[threads] RECENT_ANSWERS_SAVE_FAILED ${e.message}`); } }
     }
 
     const lines = [`${label}💬 Threads にコメント ${fresh.length} 件${autoReply() ? `（返事 ${out.replied} 件）` : ''}`];
