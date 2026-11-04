@@ -175,22 +175,24 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   const shopCountToday = (conf) => Math.max(conf.day && conf.day.date === dateKey ? Number(conf.day.n) || 0 : 0, Object.values(conf.done || {}).filter((v) => v === dateKey).length);
   const pickShop = async ({ force = false, recent = [] } = {}) => {
     if (env.CAFE_SHOP_INTRO === 'false' && !force) return null;
-    if (!force && dateKey < (env.CAFE_SHOP_INTRO_FROM || SHOP_INTRO_FROM)) return null;
     const conf = await readShopConf();
+    const priority = Array.isArray(conf.priority) ? conf.priority.filter((u) => typeof u === 'string') : []; // 社長の指定（開始日・告知の日に関係なく先に出す）
+    if (!force && !priority.length && dateKey < (env.CAFE_SHOP_INTRO_FROM || SHOP_INTRO_FROM)) return null;
     const done = conf.done || {};
     const n = shopCountToday(conf);
     if (!force && n >= shopPerDay()) return null;
     if (!force && n >= 1 && slots.jstHm(t) < SECOND_FROM) return null;
     if (!force && n >= 1 && conf.day && conf.day.date === dateKey && conf.day.lastAt && hmMin(slots.jstHm(t)) - hmMin(conf.day.lastAt) < SHOP_GAP_MIN) return null;
-    if (!force && Object.values(await readAnnounced()).some((v) => v.days.includes(dateKey))) return null; // 告知が出た日は既存店を出さない
+    if (!force && !priority.length && Object.values(await readAnnounced()).some((v) => v.days.includes(dateKey))) return null; // 告知が出た日は既存店を出さない
     if (!site.nextShop) return null;
     const skip = recent.filter((p) => p.type === 'newstore' && p.storeUrl).map((p) => p.storeUrl); // 最近新店として告知した店は後回し
-    return site.nextShop({ done: Object.keys(done), skip, today: dateKey });
+    return site.nextShop({ done: Object.keys(done), skip, today: dateKey, priority });
   };
   const markShopIntro = async (url, cycleDone) => {
     const conf = await readShopConf();
     const done = cycleDone ? {} : conf.done || {};
-    await store.setConfig('shopIntro', { done: { ...done, [url]: dateKey }, day: { date: dateKey, n: shopCountToday(conf) + 1, lastAt: slots.jstHm(t) } });
+    const priority = (Array.isArray(conf.priority) ? conf.priority : []).filter((u) => u !== url);
+    await store.setConfig('shopIntro', { done: { ...done, [url]: dateKey }, day: { date: dateKey, n: shopCountToday(conf) + 1, lastAt: slots.jstHm(t) }, ...(priority.length ? { priority } : {}) });
   };
 
   const compose = async () => withLink(await composeBody());

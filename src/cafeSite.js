@@ -376,10 +376,18 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
 
   /** 既存店の紹介（2026-11-02 社長「既存店も順次」→「なるべく新しい順に 認知低いところを先に」）: 店舗ページの公開日が新しい順に、まだ紹介していない店（done・skip 以外）を 1 つ。
    * 開店前の店（新着情報の OPEN 日が today より後）は出さない。全店済みなら最初から（cycleDone） */
-  async function nextShop({ done = [], skip = [], today = null } = {}) {
+  async function nextShop({ done = [], skip = [], today = null, priority = [] } = {}) {
     const all = await newestFirst(await listStores());
     if (!all.length) throw new Error('selfcafe.jp の店舗一覧が読めない');
     const future = await notYetOpen(today);
+    // 優先リスト（社長の指定。2026-11-04「売り上げがいまいちな北方を先に」「丸の内ももう一度」）: 紹介済み・skip に関係なく先に出す
+    for (const u of (Array.isArray(priority) ? priority : [])) {
+      let f;
+      try { f = await storeFacts(u); } catch (e) { console.warn(`[threads] CAFE_SHOP_PRIORITY_FAILED ${u} ${e.message}`); continue; }
+      if (future.has(squash(f.name))) continue;
+      const got = await fetchPhotos(f.images, `HP: ${f.name || u}`);
+      return { url: u, facts: f, storeName: f.name || null, photo: got[0] || null, ...(got.length >= 2 ? { photos: got } : {}), cycleDone: false, priority: true };
+    }
     const usable = all.filter((u) => !skip.includes(u));
     const pool = usable.length ? usable : all;
     const fresh = pool.filter((u) => !done.includes(u));

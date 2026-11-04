@@ -239,6 +239,12 @@ describe('既存店の紹介（2026-11-02 社長「新店舗終わったら既�
     const r = await createCafeSite({ http: http() }).nextShop({ done: ['https://selfcafe.jp/shop/aichi/akatsuka/', 'https://selfcafe.jp/shop/aichi/anjoeki/'] });
     expect(r).toMatchObject({ url: 'https://selfcafe.jp/shop/aichi/akatsuka/', cycleDone: true });
   });
+  // 2026-11-04 社長「もうオープン済みだけど売り上げがいまいちなイオンタウン北方先に出して 丸の内ももう一度」
+  test('nextShop: priority の店を紹介済み・skip に関係なく先に出す（priority: true）', async () => {
+    const A = 'https://selfcafe.jp/shop/aichi/akatsuka/';
+    const r = await createCafeSite({ http: http() }).nextShop({ done: [A], skip: [A], priority: [A] });
+    expect(r).toMatchObject({ url: A, priority: true, cycleDone: false });
+  });
   test('nextShop: skip（新店として最近告知した店）は飛ばす', async () => {
     const r = await createCafeSite({ http: http() }).nextShop({ done: [], skip: ['https://selfcafe.jp/shop/aichi/akatsuka/'] });
     expect(r.url).toBe('https://selfcafe.jp/shop/aichi/anjoeki/');

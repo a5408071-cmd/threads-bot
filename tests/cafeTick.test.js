@@ -516,6 +516,21 @@ describe('既存店の紹介（2026-11-02 社長「新店舗終わったら既�
     expect(d.site.nextShop).not.toHaveBeenCalled();
   });
 
+  test('優先リスト（shopIntro.priority）は開始日前・告知の日でも出し、出したらリストから外す。紹介済みの記録はリセットしない', async () => {
+    const d = mkShop({ date: '2026-11-05' });
+    d.site.nextShop = jest.fn(async () => ({ ...SHOP, priority: true }));
+    await d.store.setToken(TOKEN);
+    await d.store.setConfig('announced', { urls: { 'https://selfcafe.jp/newstore/other/': { days: ['2026-11-05'], texts: [] } } });
+    d.site.pendingAnnouncements = jest.fn(async () => []);
+    await d.store.setConfig('shopIntro', { done: { x: '2026-11-01' }, priority: [SHOP.url, 'https://selfcafe.jp/shop/aichi/marunouchi/'] });
+    await runCafeTick(d);
+    expect(d.site.nextShop.mock.calls[0][0].priority).toEqual([SHOP.url, 'https://selfcafe.jp/shop/aichi/marunouchi/']);
+    expect(d.writer.writePost.mock.calls[0][0].type).toBe('shop');
+    const c = await d.store.getConfig('shopIntro');
+    expect(c.priority).toEqual(['https://selfcafe.jp/shop/aichi/marunouchi/']);
+    expect(c.done).toEqual({ x: '2026-11-01', [SHOP.url]: '2026-11-05' });
+  });
+
   test('一周したら記録をリセットして 2 周目へ', async () => {
     const d = mkShop();
     d.site.nextShop = jest.fn(async () => ({ ...SHOP, cycleDone: true }));
