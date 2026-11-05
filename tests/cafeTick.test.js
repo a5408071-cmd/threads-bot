@@ -221,7 +221,7 @@ test('noStoreCheck: ふだんの回の店名・駅名を止める（最寄り駅
   expect(noStoreCheck('最寄り駅の近くや主要駅、全国のセルフカフェで。無人店舗です').ok).toBe(true);
 });
 
-test('ふだんの回は writePost に店名の検査（check）を渡す。告知の回は渡さない', async () => {
+test('ふだんの回は writePost に店名の検査（check）を渡す。告知の回は店名の検査ではなく有料の設備の検査（2026-11-05）', async () => {
   const d = deps();
   await d.store.setToken(TOKEN);
   await runCafeTick(d);
@@ -229,7 +229,7 @@ test('ふだんの回は writePost に店名の検査（check）を渡す。告�
   const d2 = deps({ news: [NEWS_ITEM] });
   await d2.store.setToken(TOKEN);
   await runCafeTick(d2);
-  expect(d2.writer.writePost.mock.calls[0][0].check).toBeFalsy();
+  expect(d2.writer.writePost.mock.calls[0][0].check('セルフカフェ栄店').ok).toBe(true);
 });
 
 // 2026-10-29 見本で同じ名言（孔子・老子）が続いた → 使った名言を覚えて二度と使わない
@@ -427,8 +427,8 @@ describe('既存店の紹介（2026-11-02 社長「新店舗終わったら既�
     const call = d.writer.writePost.mock.calls[0][0];
     expect(call.type).toBe('shop');
     expect(call.facts).toMatch(/藤が丘店/);
-    expect(call.facts).toMatch(/個室ブース あり/);
-    expect(call.check).toBeUndefined(); // 店名・駅名を止める検査は掛けない
+    expect(call.facts).not.toMatch(/個室ブース あり/); // 有料の設備は渡さない（2026-11-05）
+    expect(call.check('藤が丘駅から歩いてすぐの藤が丘店').ok).toBe(true); // 店名・駅名は止めない
     const sent = d.threads.publishPost.mock.calls[0][0];
     expect(sent.imageUrls).toHaveLength(2);
     expect(sent.text).toMatch(/\n▶ 店舗ページ https:\/\/selfcafe\.jp\/shop\/aichi\/fujigaoka\/$/);
@@ -569,5 +569,40 @@ describe('使い方・設備の回（2026-11-04 社長「全店の投稿がこ�
     await d.store.setToken(TOKEN);
     await runCafeTick(d);
     expect(d.threads.publishPost.mock.calls[0][0].text).toMatch(/\n▶ 使い方はこちら https:\/\/selfcafe\.jp\/usage\/$/);
+  });
+});
+
+describe('告知・既存店の紹介で個室・会議室など有料の設備を案内しない（2026-11-05 社長「鶴見のOPEN案内 そこで個室の案内はありえないわ」）', () => {
+  test('paidCheck: 個室・会議室・会員専用エリア・コピー機・ブースを止める。ふつうの文は通す', () => {
+    const { paidCheck } = require('../src/cafeTick');
+    expect(paidCheck('2名用の個室が2室あります').ok).toBe(false);
+    expect(paidCheck('会議室も使えます').ok).toBe(false);
+    expect(paidCheck('会員専用エリアがあります').ok).toBe(false);
+    expect(paidCheck('コピー機もあります').ok).toBe(false);
+    expect(paidCheck('Web会議用のブースも').ok).toBe(false);
+    expect(paidCheck('Wi-Fi・電源完備、24時間営業です。オンライン会議もどうぞ').ok).toBe(true);
+  });
+
+  test('新店の告知は writePost に paidCheck を渡し、事実に「有料の設備は書かない」と添える', async () => {
+    const d = deps({ news: [NEWS_ITEM] });
+    await d.store.setToken(TOKEN);
+    await runCafeTick(d);
+    const call = d.writer.writePost.mock.calls[0][0];
+    expect(call.check('個室があります').ok).toBe(false);
+    expect(call.check('Wi-Fi・電源完備です').ok).toBe(true);
+    expect(call.facts).toMatch(/個室.*書かない/);
+  });
+
+  test('既存店の紹介も同じ検査を渡し、店の事実に有料サービスの行を入れない', async () => {
+    const SHOP = { url: 'https://selfcafe.jp/shop/aichi/fujigaoka/', storeName: 'セルフカフェ 藤が丘店', facts: { name: 'セルフカフェ 藤が丘店', area: '名古屋市名東区', station: '藤が丘駅', hours: '7:00〜23:00', holiday: 'なし', seats: '30席', paid: { 個室ブース: true, 会議室: false, 会員専用エリア: false, コピー機: true } }, photo: PHOTO, cycleDone: false };
+    const d = deps({ now: at('11:20', '2026-11-08') });
+    d.site.nextShop = jest.fn(async () => SHOP);
+    d.writer.writePost = jest.fn(async ({ type }) => ({ ok: true, text: '藤が丘店です', type, attempts: 1, tag: '名東区カフェ' }));
+    await d.store.setToken(TOKEN);
+    await runCafeTick(d);
+    const call = d.writer.writePost.mock.calls[0][0];
+    expect(call.type).toBe('shop');
+    expect(call.check('個室ブースあり').ok).toBe(false);
+    expect(call.facts).not.toMatch(/個室ブース あり/);
   });
 });

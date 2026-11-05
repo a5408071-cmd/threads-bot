@@ -43,6 +43,14 @@ function noStoreCheck(text) {
   const m = s.match(STORE_NAME_RE) || [...s.matchAll(STATION_RE)].find((x) => x[0].startsWith('「') || !GENERIC_STATION_RE.test(x[0]));
   return m ? { ok: false, reason: `ふだんの回なのに店名・駅名（${m[0]}）が入っている。特定の店・駅・地名は書かず全店共通の話にする` } : { ok: true };
 }
+// 告知・既存店の紹介で有料の設備（個室・会議室・会員専用エリア・コピー機）を案内しない（2026-11-05 社長「鶴見のOPEN案内出たけどそこで個室の案内はありえないわ」。
+// 記事に「2名用の個室（2室）」とあり、それを主役に書いた）。記事や店舗ページにあっても書かせない
+const PAID_RE = /個室|会議室|会員専用|コピー機|ブース/;
+const PAID_NOTE = '個室・会議室・会員専用エリア・コピー機などの有料の設備は、記事や店舗ページにあっても書かない（告知の主役は Wi-Fi・電源・時間無制限・営業時間・場所）。';
+function paidCheck(text) {
+  const m = String(text || '').match(PAID_RE);
+  return m ? { ok: false, reason: `有料の設備（${m[0]}）を書いている。${PAID_NOTE}` } : { ok: true };
+}
 // HP へ案内するときのリンク（2026-11-02 社長「HP案内するときはリンク付けてあげるとより丁寧 その店舗のページね」）。
 // 告知は店のページ（無ければ記事）、ふだんの回は本文で公式サイトに触れたときだけ。写真に使った店のページは付けない（話と関係ない）
 const HP_MENTION_RE = /公式サイト|公式ホームページ|ホームページ|公式HP|HP|公式ページ/;
@@ -232,10 +240,11 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
         ...(type === 'newstore' && announcementDate(a.item) === dateKey ? [`- 今日オープンの日（${dateKey}）。「本日オープン」として、もう使える店として紹介する。`] : []),
         ...(type === 'newstore' && (announcementDate(a.item) || '9999') < dateKey ? [`- この店は ${announcementDate(a.item)} にすでにオープンしている（今日は ${dateKey}）。「オープンします」「OPEN 予定」のような予定の書き方はせず、もう使える店として紹介する。`] : []),
         `- 本文:\n${a.text}`,
+        PAID_NOTE,
         `この記事の告知は ${a.round || 1} 回目（全 ${total} 回）。${(a.round || 1) > 1 ? ((a.previous || []).length ? '前回までの告知文と、書き出し・切り口・取り上げる事実の順番・使い方の例・締めを変える（同じ文・同じ言い回しは使わない）:' : '前回の告知とは書き出し・切り口・使い方の例を変える（前回の文は残っていない）。') : '1 回目なので、何がいつどこで始まるかを分かりやすく。'}`,
         ...(a.previous || []).map((p, k) => `  前回${k + 1}: ${stripLink(p).replace(/\n/g, ' ')}`),
       ].join('\n');
-      const w = await writer.writePost({ type, recent: [...(a.previous || []).map(stripLink), ...recent.map((p) => p.text)], dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED });
+      const w = await writer.writePost({ type, recent: [...(a.previous || []).map(stripLink), ...recent.map((p) => p.text)], dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: paidCheck });
       return { ...w, photo: a.photo, ...(a.photos && a.photos.length >= 2 ? { photos: a.photos } : {}), storeUrl: a.shopUrl, storeName: a.storeName, announceUrl: a.item.url, ...(a.linkUrl ? { linkUrl: a.linkUrl } : {}) };
     }
     if (!forceType || forceType === 'shop') {
@@ -243,8 +252,8 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
       try { shop = await pickShop({ force: forceType === 'shop', recent }); } catch (e) { console.warn(`[threads] CAFE_SHOP_FAILED ${e.message}`); }
       if (forceType === 'shop' && !shop) return { ok: false, reason: '紹介できる既存店が取れない', type: 'shop' };
       if (shop) {
-        const facts = `今回は既存店を 1 店紹介する回です。店名・エリア・最寄駅を書いてよい。\n${factsText(shop.facts)}`;
-        const w = await writer.writePost({ type: 'shop', recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: shop.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED });
+        const facts = `今回は既存店を 1 店紹介する回です。店名・エリア・最寄駅を書いてよい。\n${factsText(shop.facts).split('\n').filter((l) => !l.startsWith('- 有料サービス')).join('\n')}\n${PAID_NOTE}`;
+        const w = await writer.writePost({ type: 'shop', recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: shop.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: paidCheck });
         return { ...w, photo: shop.photo, ...(shop.photos ? { photos: shop.photos } : {}), storeUrl: shop.url, storeName: shop.storeName, shopIntro: { url: shop.url, cycleDone: Boolean(shop.cycleDone) } };
       }
     }
@@ -352,4 +361,4 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   return out;
 }
 
-module.exports = { runCafeTick, pickCafeType, noStoreCheck, quoteCheck, CAFE_WINDOWS, LABEL, CAFE_BANNED };
+module.exports = { runCafeTick, pickCafeType, noStoreCheck, quoteCheck, paidCheck, CAFE_WINDOWS, LABEL, CAFE_BANNED };
