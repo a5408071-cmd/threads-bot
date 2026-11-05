@@ -240,11 +240,11 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
         ...(type === 'newstore' && announcementDate(a.item) === dateKey ? [`- 今日オープンの日（${dateKey}）。「本日オープン」として、もう使える店として紹介する。`] : []),
         ...(type === 'newstore' && (announcementDate(a.item) || '9999') < dateKey ? [`- この店は ${announcementDate(a.item)} にすでにオープンしている（今日は ${dateKey}）。「オープンします」「OPEN 予定」のような予定の書き方はせず、もう使える店として紹介する。`] : []),
         `- 本文:\n${a.text}`,
-        PAID_NOTE,
+        ...(type === 'newstore' ? [PAID_NOTE] : []), // キャンペーン・メディアは会員向けなどの記事もあるので止めない
         `この記事の告知は ${a.round || 1} 回目（全 ${total} 回）。${(a.round || 1) > 1 ? ((a.previous || []).length ? '前回までの告知文と、書き出し・切り口・取り上げる事実の順番・使い方の例・締めを変える（同じ文・同じ言い回しは使わない）:' : '前回の告知とは書き出し・切り口・使い方の例を変える（前回の文は残っていない）。') : '1 回目なので、何がいつどこで始まるかを分かりやすく。'}`,
         ...(a.previous || []).map((p, k) => `  前回${k + 1}: ${stripLink(p).replace(/\n/g, ' ')}`),
       ].join('\n');
-      const w = await writer.writePost({ type, recent: [...(a.previous || []).map(stripLink), ...recent.map((p) => p.text)], dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: paidCheck });
+      const w = await writer.writePost({ type, recent: [...(a.previous || []).map(stripLink), ...recent.map((p) => p.text)], dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: type === 'newstore' ? paidCheck : null });
       return { ...w, photo: a.photo, ...(a.photos && a.photos.length >= 2 ? { photos: a.photos } : {}), storeUrl: a.shopUrl, storeName: a.storeName, announceUrl: a.item.url, ...(a.linkUrl ? { linkUrl: a.linkUrl } : {}) };
     }
     if (!forceType || forceType === 'shop') {

@@ -593,6 +593,17 @@ describe('告知・既存店の紹介で個室・会議室など有料の設備�
     expect(call.facts).toMatch(/個室.*書かない/);
   });
 
+  test('キャンペーンの告知には掛けない（会員向けの記事などを止めない）', async () => {
+    const CAMP = { url: 'https://selfcafe.jp/campaign/1/', date: '2026-10-25', category: 'キャンペーン', title: 'サブスク会員専用キャンペーン 11月30日まで' };
+    const d = deps({ news: [CAMP] });
+    d.site.announcement = jest.fn(async () => ({ ...ANNOUNCE, item: CAMP, kind: 'campaign' }));
+    await d.store.setToken(TOKEN);
+    await runCafeTick(d);
+    const call = d.writer.writePost.mock.calls[0][0];
+    expect(call.type).toBe('campaign');
+    expect(call.check).toBeFalsy();
+  });
+
   test('既存店の紹介も同じ検査を渡し、店の事実に有料サービスの行を入れない', async () => {
     const SHOP = { url: 'https://selfcafe.jp/shop/aichi/fujigaoka/', storeName: 'セルフカフェ 藤が丘店', facts: { name: 'セルフカフェ 藤が丘店', area: '名古屋市名東区', station: '藤が丘駅', hours: '7:00〜23:00', holiday: 'なし', seats: '30席', paid: { 個室ブース: true, 会議室: false, 会員専用エリア: false, コピー機: true } }, photo: PHOTO, cycleDone: false };
     const d = deps({ now: at('11:20', '2026-11-08') });
