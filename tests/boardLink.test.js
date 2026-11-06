@@ -100,3 +100,48 @@ test('tick: 自動投稿が出たあとに boardLink.maybeReply を呼び、結�
   expect(threads.publishReply).toHaveBeenCalledWith(expect.objectContaining({ replyToId: 'm1' }));
   expect(notify.owner.mock.calls.map((c) => c[0]).join('\n')).toMatch('掲示板のリンク');
 });
+
+describe('掲示板をすすめる投稿には本文の最後に掲示板のリンクを付ける（2026-11-06 社長「これ系の投稿の時は掲示板のリンク置くようにして」）', () => {
+  const { inlineBoardUrl } = require('../src/boardLink');
+  const URL_ = 'https://nakamaboard.com/honolulu-2026';
+
+  test('board 型・本文に「掲示板」がある投稿は最後にリンク。「リンクはプロフィール」は「下に」に直す', () => {
+    const w = inlineBoardUrl({ ok: true, type: 'board', text: '掲示板を作りました。\nリンクはプロフィールに置いてます！' }, {});
+    expect(w.text).toBe(`掲示板を作りました。\nリンクは下に貼っておきます！\n\n▶ 掲示板 ${URL_}`);
+    expect(w.boardInline).toBe(true);
+    expect(w.linkUrl).toBe(URL_);
+    const h = inlineBoardUrl({ ok: true, type: 'honolulu', text: '一人参加の人向けの掲示板があります' }, {});
+    expect(h.text.endsWith(`▶ 掲示板 ${URL_}`)).toBe(true);
+  });
+
+  test('掲示板に触れない投稿・URL が空の設定・失敗した下書きはそのまま', () => {
+    const g = { ok: true, type: 'honolulu', text: '初フル、緊張とワクワク' };
+    expect(inlineBoardUrl(g, {})).toBe(g);
+    const b = { ok: true, type: 'board', text: '掲示板を作りました' };
+    expect(inlineBoardUrl(b, { THREADS_BOARD_URL: '' })).toBe(b);
+    const long = { ok: true, type: 'board', text: '掲示板'.repeat(160) }; // 480 字。リンクを足すと 500 字を超える
+    expect(inlineBoardUrl(long, {})).toBe(long);
+    const f = { ok: false, reason: 'x' };
+    expect(inlineBoardUrl(f, {})).toBe(f);
+  });
+
+  test('tick: 掲示板の投稿は本文にリンク、写真が無ければリンクのカードも付け、返信のリンクは付けない', async () => {
+    const now = at('2026-11-06T09:20:00+09:00');
+    const store = memoryStore({ now: () => now });
+    await store.setToken(TOKEN);
+    const threads = {
+      publishPost: jest.fn(async () => ({ ok: true, mediaId: 'm1', permalink: 'https://www.threads.net/@x/post/m1' })),
+      publishReply: jest.fn(async () => ({ ok: true, mediaId: 'r1' })),
+      refreshToken: jest.fn(),
+    };
+    const writer = { pickType: () => 'board', writePost: jest.fn(async () => ({ ok: true, text: '掲示板を作りました。リンクはプロフィールにあります🙌', type: 'board', attempts: 1, tag: 'ホノルルマラソン' })) };
+    const notify = { owner: jest.fn(async () => ({ ok: true })) };
+    const boardLink = createBoardLink({ store, threads, env: {}, now: () => now });
+    const r = await runTick({ env: {}, store, threads, writer, notify, anthropic: {}, now: () => now, mode: 'live', draw: () => ({ slots: ['09:17', '20:41'] }), boardLink });
+    expect(r.posted).toHaveLength(1);
+    const sent = threads.publishPost.mock.calls[0][0];
+    expect(sent.text).toMatch(/リンクは下に貼っておきます🙌\n\n▶ 掲示板 https:\/\/nakamaboard\.com\/honolulu-2026$/);
+    expect(sent.linkAttachment).toBe('https://nakamaboard.com/honolulu-2026');
+    expect(threads.publishReply).not.toHaveBeenCalled();
+  });
+});

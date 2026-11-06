@@ -58,4 +58,20 @@ function createBoardLink({ store, threads, env = process.env, now = () => new Da
   return { maybeReply };
 }
 
-module.exports = { createBoardLink, TEMPLATES, LINK_TYPES, DEFAULT_URL, DEFAULT_EVERY_DAYS };
+/**
+ * 掲示板をすすめる投稿（board 型・本文に「掲示板」）は本文の最後に掲示板のリンクを付ける
+ * （2026-11-06 社長「これ系の投稿の時は掲示板のリンク置くようにして」。プロフィールのリンクは貼れていない＝11/03 のエラー）。
+ * 「リンクはプロフィールに…」と書いていたら「下に」に直す。付けた投稿には返信のリンク（maybeReply）は付けない
+ */
+const POST_MAX = 500;
+const PROFILE_RE = /リンクはプロフィール(?:欄)?に(?:置いてます|置いています|あります|貼ってます|貼っています)/g;
+function inlineBoardUrl(w, env = process.env) {
+  const url = env.THREADS_BOARD_URL === undefined ? DEFAULT_URL : String(env.THREADS_BOARD_URL || '').trim();
+  if (!w || !w.ok || !url) return w;
+  if (w.type !== 'board' && !/掲示板/.test(w.text || '')) return w;
+  const text = `${String(w.text).replace(PROFILE_RE, 'リンクは下に貼っておきます').trimEnd()}\n\n▶ 掲示板 ${url}`;
+  if ([...text].length > POST_MAX) return w; // Threads は 500 字まで。入らなければ今まで通り返信で添える
+  return { ...w, text, linkUrl: url, boardInline: true };
+}
+
+module.exports = { createBoardLink, inlineBoardUrl, TEMPLATES, LINK_TYPES, DEFAULT_URL, DEFAULT_EVERY_DAYS };

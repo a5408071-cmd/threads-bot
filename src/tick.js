@@ -11,6 +11,7 @@
 const slots = require('./slots');
 const { WEEKLY_DAY } = require('./growth');
 const defaultWriter = require('./writer');
+const { inlineBoardUrl } = require('./boardLink');
 
 const RECENT_POSTS = 14;
 const RECENT_TYPES = 2;
@@ -106,7 +107,7 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
       for (const q of String(w.photoQuery || '').split('|').map((x) => x.trim()).filter(Boolean).slice(0, 2)) { s = await pickStock(q, w.text); if (s) break; }
       if (s) photo = { id: s.id, name: s.name, url: s.url, stock: true, page: s.page };
     }
-    return { ...w, photo };
+    return inlineBoardUrl({ ...w, photo }, env); // 掲示板をすすめる投稿は本文の最後にリンク（2026-11-06 社長）
   };
 
   if (mode === 'dry' || mode === 'test') {
@@ -148,7 +149,7 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
         out.skipped.push({ index: idx, reason: w.reason });
         await tell(`⚠ 今日の ${n} 本目（${hm}）は出せませんでした（${w.reason}）`);
       } else if (w) {
-        const r = await threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}) });
+        const r = await threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}), ...(w.linkUrl && !w.photo ? { linkAttachment: w.linkUrl } : {}) });
         if (!r.ok) {
           // 同じ枠を繰り返さない（release しない）。本当の失敗として返す
           await store.markSkipped(dateKey, idx, `投稿失敗: ${r.error}`);
@@ -164,7 +165,7 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
           if (env.THREADS_COPY_TO_OWNER === 'true') {
             await tell(`📝 Threads に投稿しました（${n} 本目・${w.type}${w.photo ? `・📷 ${w.photo.name}` : ''}${w.tag ? `・#${w.tag}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
           }
-          await addBoardLink(r.mediaId, w.type);
+          if (!w.boardInline) await addBoardLink(r.mediaId, w.type);
         }
       }
     } else {
@@ -178,7 +179,7 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
     try { w = await compose(); } catch (e) { fail(`本文の生成でエラー: ${e.message}`); }
     if (w && !w.ok) fail(`本文を作れなかった: ${w.reason}`);
     if (w && w.ok) {
-      const r = await threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}) });
+      const r = await threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}), ...(w.linkUrl && !w.photo ? { linkAttachment: w.linkUrl } : {}) });
       if (!r.ok) {
         fail(`投稿失敗（${r.stage}）: ${r.error}`);
         await tell(`⚠ 今すぐの投稿に失敗しました（${r.stage}: ${r.error}）`);
@@ -188,7 +189,7 @@ async function runTick({ env = process.env, store, threads, writer = defaultWrit
         out.posted.push({ index: null, manual: true, mediaId: r.mediaId, permalink: r.permalink, type: w.type, ...(w.tag ? { tag: w.tag } : {}), ...(w.photo ? { photo: w.photo.name } : {}) });
         console.log(`[threads] POSTED manual type=${w.type} media=${r.mediaId} chars=${w.text.length}`);
         await tell(`📝 Threads に投稿しました（手動・${w.type}${w.photo ? `・📷 ${w.photo.name}` : ''}${w.tag ? `・#${w.tag}` : ''}）\n\n${w.text}\n\n→ ${r.permalink || '(リンク取得できず)'}`);
-        await addBoardLink(r.mediaId, w.type);
+        if (!w.boardInline) await addBoardLink(r.mediaId, w.type);
       }
     }
   }
