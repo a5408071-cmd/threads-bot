@@ -13,7 +13,7 @@ const GOLF_TYPES = ['aruaru', 'season', 'small', 'hook']; // 問いかけと分�
  */
 const DEFAULT_WEIGHTS = { honolulu: 5, board: 4, fitness: 3, work: 1, daily: 1, news: 1, koyomi: 1, tips: 1, season: 1, hook: 1, question: 1, aruaru: 1, invite: 1, small: 0 }; // 各型 0〜5（週次の分析の上限と同じ）
 // ウェブ検索で事実を確かめてから書く型（2026-10-29 社長「試験の残り何日」「暦」「継続のコツ へえーってなる」を追加）
-const SEARCH_TYPES = ['news', 'countdown', 'koyomi', 'tips', 'quote']; // countdown・quote（偉人の名言）は公式アカウントだけの型
+const SEARCH_TYPES = ['news', 'countdown', 'koyomi', 'tips', 'quote', 'trivia']; // countdown・quote（偉人の名言）・trivia（勉強・集中の豆知識）は公式アカウントだけの型
 const COUNTDOWN_MAX_DAYS = 400;
 const WEB_SEARCH_TOOL = { type: 'web_search_20260209', name: 'web_search', max_uses: 3 };
 const MAX_CONTINUES = 3; // pause_turn（検索の続き）の上限

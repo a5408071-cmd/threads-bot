@@ -57,6 +57,13 @@ function noQuestionCheck(text) {
   const last = String(text || '').trim().split('\n').map((l) => l.trim()).filter(Boolean).pop() || '';
   return QUESTION_END_RE.test(last) ? { ok: false, reason: '最後が問いかけ（？）で終わっている。質問で締めず、言い切りで終える' } : { ok: true };
 }
+// 資格・試験のタグは試験の情報を載せた回（countdown）だけ（2026-11-09 社長）。他の型で付いたら型の既定のタグへ
+const EXAM_TAG_RE = /資格|試験|簿記|共通テスト|センター|受験|宅建|国家/; // 「簿記3級」「共通テスト対策」などの表記ゆれも拾う
+function examTagFix(w) {
+  if (!w || !w.ok || !w.tag || w.type === 'countdown' || !(personaCafe.EXAM_TAGS.includes(w.tag) || EXAM_TAG_RE.test(w.tag))) return w;
+  const d = personaCafe.DEFAULT_TAG[w.type];
+  return { ...w, tag: d && !personaCafe.EXAM_TAGS.includes(d) ? d : personaCafe.FALLBACK_TAG };
+}
 // 検査をつなぐ（先に落ちた理由を返す）
 const allChecks = (...fs) => (text) => { for (const fn of fs) { const r = fn && fn(text); if (r && !r.ok) return r; } return { ok: true }; };
 // HP へ案内するときのリンク（2026-11-02 社長「HP案内するときはリンク付けてあげるとより丁寧 その店舗のページね」）。
@@ -89,8 +96,15 @@ const GENERAL_FACTS = '今回は特定の店を紹介しない回です。店名
 // 使い方・設備の回（2026-11-04 社長「使い方とか設備の説明とかの投稿もたまにはいれてね」）: 直近 GUIDE_EVERY 本に無ければ配分に関係なく次はどちらか（5 本/日なのでほぼ 1 日 1 本）
 const GUIDE_TYPES = ['howto', 'facility'];
 const GUIDE_EVERY = 4;
-function pickCafeType(recentTypes, rng = Math.random, weights = null) {
+// 毎日 1 本ずつ必ず出す型（2026-11-09 社長「偉人はもっと頻度あげて」「勉強や集中などのうんちくや豆知識系は毎日入れ込もう」）。
+// todayTypes（今日すでに出した型）に無ければ、配分や使い方・設備の回より先に出す。直前と同じ型は続けない
+const DAILY_TYPES = ['trivia', 'quote'];
+function pickCafeType(recentTypes, rng = Math.random, weights = null, todayTypes = null) {
   const recent = recentTypes || [];
+  if (Array.isArray(todayTypes)) {
+    const due = DAILY_TYPES.filter((d) => !todayTypes.includes(d) && recent[0] !== d);
+    if (due.length) return due[Math.floor(rng() * due.length)];
+  }
   if (recent.length >= GUIDE_EVERY && !recent.slice(0, GUIDE_EVERY).some((x) => GUIDE_TYPES.includes(x))) {
     // 久しく出ていない方（直近で先に見つかる方の反対）。どちらも見当たらなければ facility
     const last = recent.find((x) => GUIDE_TYPES.includes(x));
@@ -265,16 +279,28 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
         return { ...w, photo: shop.photo, ...(shop.photos ? { photos: shop.photos } : {}), storeUrl: shop.url, storeName: shop.storeName, shopIntro: { url: shop.url, cycleDone: Boolean(shop.cycleDone) } };
       }
     }
-    const type = forceType || pickCafeType(recent.map((p) => p.type), Math.random, weights);
+    const todayTypes = recent.filter((p) => p.postedAt && slots.jstDateKey(new Date(p.postedAt)) === dateKey).map((p) => p.type);
+    const type = forceType || pickCafeType(recent.map((p) => p.type), Math.random, weights, todayTypes);
     const picked = await site.pickPhoto({ recentUrls: recent.map((p) => p.storeUrl).filter(Boolean) });
-    let facts = GENERAL_FACTS;
-    if (type === 'quote') {
-      // 使った名言は二度と使わない（2026-10-29 見本で孔子・老子が続いた）
-      const used = ((await store.getConfig('quotes')) || {}).used || [];
-      facts += `\n名言は日本・海外の偉人、経営者・科学者・発明家・作家・スポーツ選手など幅広く選ぶ（孔子・老子のような定番ばかりにしない）。${used.length ? `\nこれまでに使った名言（同じ言葉は使わない。同じ人も直近 10 個に入っていれば避ける）:\n${used.slice(-QUOTES_IN_PROMPT).map((q) => `- ${q}`).join('\n')}` : ''}`;
+    const writeGeneral = async (ty) => {
+      let facts = GENERAL_FACTS;
+      if (ty === 'quote') {
+        // 使った名言は二度と使わない（2026-10-29 見本で孔子・老子が続いた）
+        const used = ((await store.getConfig('quotes')) || {}).used || [];
+        facts += `\n名言は日本・海外の偉人、経営者・科学者・発明家・作家・スポーツ選手など幅広く選ぶ（孔子・老子のような定番ばかりにしない）。${used.length ? `\nこれまでに使った名言（同じ言葉は使わない。同じ人も直近 10 個に入っていれば避ける）:\n${used.slice(-QUOTES_IN_PROMPT).map((q) => `- ${q}`).join('\n')}` : ''}`;
+      }
+      return writer.writePost({ type: ty, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: allChecks(noQuestionCheck, ty === 'quote' ? quoteCheck : noStoreCheck) });
+    };
+    let w = await writeGeneral(type);
+    // 毎日枠（豆知識・名言）が書けなかったら、その枠は別の型で出す（失敗し続けて 1 日の枠が全部消えるのを防ぐ。レビュー指摘）
+    if (!w.ok && !forceType && DAILY_TYPES.includes(type)) {
+      let alt = null;
+      for (let k = 0; k < 5 && (!alt || DAILY_TYPES.includes(alt)); k++) alt = pickCafeType(recent.map((p) => p.type), Math.random, weights);
+      if (DAILY_TYPES.includes(alt)) alt = 'work';
+      console.warn(`[threads] CAFE_DAILY_FALLBACK type=${type} reason=${w.reason} alt=${alt}`);
+      w = await writeGeneral(alt);
     }
-    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: allChecks(noQuestionCheck, type === 'quote' ? quoteCheck : noStoreCheck) });
-    return { ...w, photo: picked.photo, storeUrl: picked.url, storeName: null };
+    return { ...examTagFix(w), photo: picked.photo, storeUrl: picked.url, storeName: null };
   };
 
   const publish = async (w) => threads.publishPost({ token: token.token, userId: token.userId, text: w.text, ...(w.photos ? { imageUrls: w.photos.map((x) => x.url) } : w.photo ? { imageUrl: w.photo.url } : {}), ...(w.tag ? { topicTag: w.tag } : {}), ...(w.linkUrl ? { linkAttachment: w.linkUrl } : {}) });
@@ -369,4 +395,4 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   return out;
 }
 
-module.exports = { noQuestionCheck, runCafeTick, pickCafeType, noStoreCheck, quoteCheck, paidCheck, CAFE_WINDOWS, LABEL, CAFE_BANNED };
+module.exports = { noQuestionCheck, examTagFix, DAILY_TYPES, runCafeTick, pickCafeType, noStoreCheck, quoteCheck, paidCheck, CAFE_WINDOWS, LABEL, CAFE_BANNED };

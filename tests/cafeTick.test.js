@@ -358,9 +358,21 @@ describe('毎日の見直しを投稿に効かせる（2026-11-02）', () => {
     expect(r.learning).toEqual({ ok: true });
   });
 
+  test('毎日枠（豆知識・名言）が書けなかったら、その枠は別の型で出す（2026-11-09 レビュー指摘）', async () => {
+    const d = deps({ now: at('11:20') });
+    await d.store.setToken(TOKEN);
+    d.writer.writePost = jest.fn(async ({ type }) => (['trivia', 'quote'].includes(type) ? { ok: false, reason: '検索失敗', type } : { ok: true, text: 'ドリンク1杯でゆっくりどうぞ。', type, attempts: 1, tag: 'セルフカフェ' }));
+    await runCafeTick({ ...d, learning: { daily: jest.fn(), notesText: jest.fn(async () => ''), weightsFor: jest.fn(async () => ({ howto: 5 })) } });
+    const types = d.writer.writePost.mock.calls.map((c) => c[0].type);
+    expect(['trivia', 'quote']).toContain(types[0]);
+    expect(types[1]).toBe('howto');
+  });
+
   test('メモは投稿を書くときの指示（facts）に入り、配分は型の選び方に使う', async () => {
     const d = deps({ now: at('11:20') });
     await d.store.setToken(TOKEN);
+    // 今日の豆知識・名言は出し済み（毎日 1 本ずつの枠が先に来るため。2026-11-09）
+    for (const [i, type] of ['trivia', 'quote'].entries()) await d.store.savePost({ mediaId: `today${i}`, text: `今日の${type}`, type, source: 'auto', postedAt: at(`0${8 + i}:00`).toISOString() });
     const learning = { daily: jest.fn(), notesText: jest.fn(async () => 'これまでの数字から分かった…\n- 1 行目に問いかけ'), weightsFor: jest.fn(async () => ({ howto: 5 })) };
     await runCafeTick({ ...d, learning });
     const call = d.writer.writePost.mock.calls[0][0];
