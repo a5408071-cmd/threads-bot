@@ -13,6 +13,8 @@ const { WEEKLY_DAY } = require('./growth');
 const LOOKBACK_DAYS = 7;
 const MIN_POSTS = 3; // 数字の付いた投稿がこれ未満なら見直さない
 const MAX_NOTES = 5;
+// 社長の方針に反するメモ（問いかけ・質問で締める／入れる）は投稿の指示に渡さない（2026-11-09）
+const BANNED_NOTE_RE = /問いかけ|質問|疑問|？|\?/;
 const NOTE_MAX = 80;
 const MODEL = 'claude-opus-5-5';
 const LABEL = '【公式】';
@@ -44,7 +46,7 @@ function createCafeLearning({ store, anthropic, notify, env = process.env, now =
 
   async function notesText() {
     const s = await strategy();
-    const notes = (s && Array.isArray(s.notes) ? s.notes : []).filter(Boolean);
+    const notes = (s && Array.isArray(s.notes) ? s.notes : []).filter(Boolean).filter((n) => !BANNED_NOTE_RE.test(n)); // 前に保存した問いかけ系のメモも使わない
     if (!notes.length) return '';
     return `これまでの数字から分かった、伸びやすい書き方（上の決まりを守れる範囲で取り入れる）:\n${notes.map((n) => `- ${n}`).join('\n')}`;
   }
@@ -60,9 +62,9 @@ function createCafeLearning({ store, anthropic, notify, env = process.env, now =
     const prev = await strategy();
     const prompt = [
       'あなたはセルフカフェ（無人のワークスペース型カフェ）公式 Threads アカウントの運用担当です。目的は表示・いいね・返信を増やし、フォロワーを増やすこと。',
-      '直近 7 日の投稿の数字を見比べて、伸びた投稿と伸びなかった投稿の違い（型・曜日と時間・タグ・書き出し・長さ・問いかけの有無・写真・取り上げた話題）を探し、次のものを作ってください。',
+      '直近 7 日の投稿の数字を見比べて、伸びた投稿と伸びなかった投稿の違い（型・曜日と時間・タグ・書き出し・長さ・写真・取り上げた話題）を探し、次のものを作ってください。',
       `1. weights: 型ごとの配分（各 0〜5 の整数）。型: ${personaCafe.TYPES.join(', ')}。新店・キャンペーン・メディアの告知（newstore・campaign・media）と既存店紹介（shop）は自動で出るので配分には入れない。本数が少なくて判断できない型は今の値（無ければ 2）のまま。`,
-      `2. notes: 次の投稿を書く人への具体的な指示を ${MAX_NOTES} つまで（各 ${NOTE_MAX} 字以内）。「何をすると伸びた／伸びなかった」を、すぐ実行できる形で（例: 新店のタグは駅名でなく市区の名前にする／1 行目に問いかけを置く）。`,
+      `2. notes: 次の投稿を書く人への具体的な指示を ${MAX_NOTES} つまで（各 ${NOTE_MAX} 字以内）。「何をすると伸びた／伸びなかった」を、すぐ実行できる形で（例: 新店のタグは駅名でなく市区の名前にする／1 行目で言い切る）。問いかけ・質問で締める／問いかけを入れる指示、文を長くする指示、利用シーンを増やす指示は出さない（2026-11-09 社長「毎回質問系で終わるのがうざい」「文章が長い」「そんなに利用シーンのこと出さなくていい」）。`,
       '   変えてはいけない決まり: ふだんの回で店名・駅名・地名を書かない、料金などの数字を書かない、URL・ハッシュタグを書かない、他社と比べない、事実に無い設備を書かない。これに反する指示は書かない。時刻は選べないので時間帯の指示は書かない（気づきとして report に書くのはよい）。',
       '   数字の差が小さくて言い切れないことは書かない。前回のメモで効かなかったものは外す。',
       '3. report: 社長への短い報告（200 字以内。数字と「来週こうする」）。',

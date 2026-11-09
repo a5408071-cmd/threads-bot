@@ -27,7 +27,7 @@ describe('公式の毎日の見直し（2026-11-02 社長「伸ばす投稿を�
     expect(prompt).toMatch(/店名・駅名.*書かない|URL/); // 変えてはいけない決まりを伝える
     expect(await l.weightsFor()).toMatchObject({ work: 4, study: 2, quote: 0 });
     const notes = await l.notesText();
-    expect(notes).toMatch(/問いかけで締めた回/);
+    expect(notes).not.toMatch(/問いかけ/); // 問いかけ系のメモは投稿の指示に渡さない（2026-11-09 社長「毎回質問系で終わるのがうざい」）
     expect(notes).toMatch(/市区の名前/);
   });
 

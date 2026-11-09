@@ -37,8 +37,9 @@ const LENGTH_BANDS = {
 };
 const NO_TINY_TYPES = ['quote', 'newstore', 'campaign', 'media', 'countdown', 'shop']; // 中身が要る型は「ひと言」の回にしない
 
-function pickLength({ photo, type, rand = Math.random }) {
-  const bands = LENGTH_BANDS[photo ? 'photo' : 'text'];
+// bandSet: 人物像ごとの長さ（personaCafe.LENGTH_BANDS など。無ければ既定）
+function pickLength({ photo, type, rand = Math.random, bandSet = null }) {
+  const bands = (bandSet || LENGTH_BANDS)[photo ? 'photo' : 'text'];
   const i = Math.min(bands.length - 1, Math.floor(rand() * bands.length));
   return (i === 0 && NO_TINY_TYPES.includes(type)) ? bands[1] : bands[i];
 }
@@ -208,7 +209,7 @@ function userPrompt({ type, recent, dateKey, reasons, photo = null, stockPhoto =
     lines.push(`前の案は次の理由で使えませんでした。直して書き直してください: ${reasons.join(' / ')}`);
   }
   if ((P.CLOSE_WITH_CHOICE || []).includes(type)) lines.push('締めは、読んだ人が一言で答えられる2択の問いかけにする（例:「景色重視派？スコア重視派？」「朝イチ派？午後スルー派？」）。問いかけは1つだけ。');
-  lines.push(`長さ: ${(length || pickLength({ photo, type, rand: () => 0.5 })).text}`);
+  lines.push(`長さ: ${(length || pickLength({ photo, type, rand: () => 0.5, bandSet: P.LENGTH_BANDS })).text}`);
   lines.push('直近の投稿と同じ締め方（誘い・募集・一杯）や同じ自己紹介を繰り返さない。');
   if (stockPhoto) lines.push('この投稿には、あとから写真サイト（Pixabay）で探した本物の写真を 1 枚付けます。本文の内容に合う写真を探す英語の検索語（2〜4 語。例: roasted sweet potato autumn / autumn golf course morning / highball glass bar）を、タグの行の前に「写真: <文の主役を表す検索語> | <同じ主役の別の言い方>」の 1 行で書いてください（2 つを | で区切る。1 つ目で見つからなければ 2 つ目。どちらも文の**主役**を表す語にする。例: hawaii beach sunrise | waikiki ocean palm trees ／ morning run city sunrise | runner sunrise road）。写真サイトは海外のものが中心なので、2 つ目は雰囲気寄り（例: morning run city sunrise / rooftop bar night / modern office desk coffee）にする。キラキラして前向きな雰囲気の写真になる語を選ぶ（生活感のある料理・台所は避ける）。本文は写真の説明にはしない。');
   lines.push('本文だけを返してください。');
@@ -232,7 +233,7 @@ ${text}`;
 }
 
 async function writePost({ type, recent = [], dateKey, env = {}, anthropic, photo = null, stockPhoto = false, persona: P = persona, facts = null, banned: bannedOverride = null, check: extraCheck = null, rand = Math.random }) {
-  const length = pickLength({ photo, type, rand }); // 書き直しの間も同じ長さ
+  const length = pickLength({ photo, type, rand, bandSet: P.LENGTH_BANDS }); // 書き直しの間も同じ長さ
   const banned = bannedOverride || parseBanned(env);
   const model = env.THREADS_MODEL || DEFAULT_MODEL;
   const reasons = [];

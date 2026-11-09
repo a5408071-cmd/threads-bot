@@ -51,6 +51,14 @@ function paidCheck(text) {
   const m = String(text || '').match(PAID_RE);
   return m ? { ok: false, reason: `有料の設備（${m[0]}）を書いている。${PAID_NOTE}` } : { ok: true };
 }
+// 問いかけで締めない（2026-11-09 社長「毎回質問系で終わるのがうざい」）。プロンプトだけに頼らず、最後の文が ？ で終わる案は書き直し
+const QUESTION_END_RE = /[？?][\s」』）)！!〜~…\p{Extended_Pictographic}️]*$/u;
+function noQuestionCheck(text) {
+  const last = String(text || '').trim().split('\n').map((l) => l.trim()).filter(Boolean).pop() || '';
+  return QUESTION_END_RE.test(last) ? { ok: false, reason: '最後が問いかけ（？）で終わっている。質問で締めず、言い切りで終える' } : { ok: true };
+}
+// 検査をつなぐ（先に落ちた理由を返す）
+const allChecks = (...fs) => (text) => { for (const fn of fs) { const r = fn && fn(text); if (r && !r.ok) return r; } return { ok: true }; };
 // HP へ案内するときのリンク（2026-11-02 社長「HP案内するときはリンク付けてあげるとより丁寧 その店舗のページね」）。
 // 告知は店のページ（無ければ記事）、ふだんの回は本文で公式サイトに触れたときだけ。写真に使った店のページは付けない（話と関係ない）
 const HP_MENTION_RE = /公式サイト|公式ホームページ|ホームページ|公式HP|HP|公式ページ/;
@@ -244,7 +252,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
         `この記事の告知は ${a.round || 1} 回目（全 ${total} 回）。${(a.round || 1) > 1 ? ((a.previous || []).length ? '前回までの告知文と、書き出し・切り口・取り上げる事実の順番・使い方の例・締めを変える（同じ文・同じ言い回しは使わない）:' : '前回の告知とは書き出し・切り口・使い方の例を変える（前回の文は残っていない）。') : '1 回目なので、何がいつどこで始まるかを分かりやすく。'}`,
         ...(a.previous || []).map((p, k) => `  前回${k + 1}: ${stripLink(p).replace(/\n/g, ' ')}`),
       ].join('\n');
-      const w = await writer.writePost({ type, recent: [...(a.previous || []).map(stripLink), ...recent.map((p) => p.text)], dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: type === 'newstore' ? paidCheck : null });
+      const w = await writer.writePost({ type, recent: [...(a.previous || []).map(stripLink), ...recent.map((p) => p.text)], dateKey, env, anthropic, photo: a.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: type === 'newstore' ? allChecks(noQuestionCheck, paidCheck) : noQuestionCheck });
       return { ...w, photo: a.photo, ...(a.photos && a.photos.length >= 2 ? { photos: a.photos } : {}), storeUrl: a.shopUrl, storeName: a.storeName, announceUrl: a.item.url, ...(a.linkUrl ? { linkUrl: a.linkUrl } : {}) };
     }
     if (!forceType || forceType === 'shop') {
@@ -253,7 +261,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
       if (forceType === 'shop' && !shop) return { ok: false, reason: '紹介できる既存店が取れない', type: 'shop' };
       if (shop) {
         const facts = `今回は既存店を 1 店紹介する回です。店名・エリア・最寄駅を書いてよい。\n${factsText(shop.facts).split('\n').filter((l) => !l.startsWith('- 有料サービス')).join('\n')}\n${PAID_NOTE}`;
-        const w = await writer.writePost({ type: 'shop', recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: shop.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: paidCheck });
+        const w = await writer.writePost({ type: 'shop', recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: shop.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: allChecks(noQuestionCheck, paidCheck) });
         return { ...w, photo: shop.photo, ...(shop.photos ? { photos: shop.photos } : {}), storeUrl: shop.url, storeName: shop.storeName, shopIntro: { url: shop.url, cycleDone: Boolean(shop.cycleDone) } };
       }
     }
@@ -265,7 +273,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
       const used = ((await store.getConfig('quotes')) || {}).used || [];
       facts += `\n名言は日本・海外の偉人、経営者・科学者・発明家・作家・スポーツ選手など幅広く選ぶ（孔子・老子のような定番ばかりにしない）。${used.length ? `\nこれまでに使った名言（同じ言葉は使わない。同じ人も直近 10 個に入っていれば避ける）:\n${used.slice(-QUOTES_IN_PROMPT).map((q) => `- ${q}`).join('\n')}` : ''}`;
     }
-    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: type === 'quote' ? quoteCheck : noStoreCheck });
+    const w = await writer.writePost({ type, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: allChecks(noQuestionCheck, type === 'quote' ? quoteCheck : noStoreCheck) });
     return { ...w, photo: picked.photo, storeUrl: picked.url, storeName: null };
   };
 
@@ -361,4 +369,4 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   return out;
 }
 
-module.exports = { runCafeTick, pickCafeType, noStoreCheck, quoteCheck, paidCheck, CAFE_WINDOWS, LABEL, CAFE_BANNED };
+module.exports = { noQuestionCheck, runCafeTick, pickCafeType, noStoreCheck, quoteCheck, paidCheck, CAFE_WINDOWS, LABEL, CAFE_BANNED };

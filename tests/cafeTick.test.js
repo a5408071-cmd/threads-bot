@@ -601,7 +601,9 @@ describe('告知・既存店の紹介で個室・会議室など有料の設備�
     await runCafeTick(d);
     const call = d.writer.writePost.mock.calls[0][0];
     expect(call.type).toBe('campaign');
-    expect(call.check).toBeFalsy();
+    // 有料設備の検査は掛けない（問いかけ締めの検査だけ。2026-11-09）
+    expect(call.check('サブスク会員専用キャンペーンです。詳しくは公式サイトで。')).toEqual({ ok: true });
+    expect(call.check('会員専用エリアもどうですか？').ok).toBe(false);
   });
 
   test('既存店の紹介も同じ検査を渡し、店の事実に有料サービスの行を入れない', async () => {
