@@ -358,6 +358,30 @@ describe('毎日の見直しを投稿に効かせる（2026-11-02）', () => {
     expect(r.learning).toEqual({ ok: true });
   });
 
+  test('Meta が写真を取りに来られない（sub=2207052）と、その写真を記録して別の写真で 1 回だけ出し直す（2026-11-09）', async () => {
+    const d = deps({ now: at('11:20') });
+    await d.store.setToken(TOKEN);
+    d.site.setBadPhotos = jest.fn();
+    const ERR = `写真 ${PHOTO.url}: An unknown error occurred（code=1 sub=2207052 メディアをダウンロードできませんでした。次のURIからメディアを取得できませんでした: ${PHOTO.url}。）`;
+    d.threads.publishPost = jest.fn()
+      .mockResolvedValueOnce({ ok: false, stage: 'container', error: ERR })
+      .mockResolvedValueOnce({ ok: true, mediaId: 'cm2', permalink: 'https://www.threads.net/@selfcafe/post/2' });
+    const r = await runCafeTick(d);
+    expect(d.threads.publishPost).toHaveBeenCalledTimes(2);
+    expect((await d.store.getConfig('badPhotos')).urls).toEqual([PHOTO.url]);
+    expect(d.site.setBadPhotos).toHaveBeenLastCalledWith([PHOTO.url]);
+    expect(r.posted).toHaveLength(1);
+    expect(r.errors).toEqual([]);
+  });
+
+  test('写真と関係ない投稿失敗では出し直さない', async () => {
+    const d = deps({ now: at('11:20') });
+    await d.store.setToken(TOKEN);
+    d.threads.publishPost = jest.fn(async () => ({ ok: false, stage: 'publish', error: 'code=24 sub=4279009' }));
+    await runCafeTick(d);
+    expect(d.threads.publishPost).toHaveBeenCalledTimes(1);
+  });
+
   test('毎日枠（豆知識・名言）が書けなかったら、その枠は別の型で出す（2026-11-09 レビュー指摘）', async () => {
     const d = deps({ now: at('11:20') });
     await d.store.setToken(TOKEN);

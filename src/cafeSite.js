@@ -230,6 +230,9 @@ function factsText(f) {
 }
 
 function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}) {
+  // Meta が取りに来られなかった写真（code=1 sub=2207052）は使わない（2026-11-09 pb030371_hp.jpg が 11/8・11/9 と続けて失敗）。cafeTick が Firestore の記録から入れる
+  let badPhotos = new Set();
+  const setBadPhotos = (list) => { badPhotos = new Set(Array.isArray(list) ? list : []); };
   const client = http || require('axios');
   const cache = new Map();
   const getText = async (url) => {
@@ -281,6 +284,7 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
     const imgs = (images || []).slice();
     const start = imgs.length ? Math.floor(rng() * imgs.length) : 0;
     for (const src of imgs.slice(start).concat(imgs.slice(0, start))) {
+      if (badPhotos.has(src)) continue;
       try {
         const r = await client.get(src, { responseType: 'arraybuffer', timeout: 20000, maxContentLength: 8 * 1024 * 1024 });
         const ct = String((r.headers && r.headers['content-type']) || '');
@@ -299,6 +303,7 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
     const out = [];
     for (const src of (images || [])) {
       if (out.length >= max) break;
+      if (badPhotos.has(src)) continue;
       try {
         const r = await client.get(src, { responseType: 'arraybuffer', timeout: 20000, maxContentLength: 8 * 1024 * 1024 });
         const ct = String((r.headers && r.headers['content-type']) || '');
@@ -409,7 +414,7 @@ function createCafeSite({ http, rng = Math.random, now = () => Date.now() } = {}
     return { url, facts, storeName, photo: got[0] || null, ...(got.length >= 2 ? { photos: got } : {}), cycleDone };
   }
 
-  return { listStores, findStore, storeFacts, pickStore, pickPhoto, pendingAnnouncements, announcement, nextShop };
+  return { setBadPhotos, listStores, findStore, storeFacts, pickStore, pickPhoto, pendingAnnouncements, announcement, nextShop };
 }
 
 module.exports = { createCafeSite, parseStoreList, parseStoreNames, matchStore, parseStorePage, factsText, parseNewsList, parseNewsEntry, parseMediaList, parseMediaEntry, MEDIA_URL, announcementDate, isAnnounceable, SHOP_LIST_URL, NEWS_URL, ANNOUNCE_CATEGORIES };

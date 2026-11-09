@@ -64,6 +64,13 @@ function examTagFix(w) {
   const d = personaCafe.DEFAULT_TAG[w.type];
   return { ...w, tag: d && !personaCafe.EXAM_TAGS.includes(d) ? d : personaCafe.FALLBACK_TAG };
 }
+// 投稿失敗のうち「メディアをダウンロードできませんでした」（code=1 sub=2207052）で、エラー文に出てきたこの投稿の写真 URL
+function badPhotoUrls(w, error) {
+  const e = String(error || '');
+  if (!/2207052|ダウンロードできませんでした/.test(e)) return [];
+  const mine = [...(w.photos || []).map((p) => p.url), ...(w.photo ? [w.photo.url] : [])].filter(Boolean);
+  return [...new Set(mine.filter((u) => e.includes(u)))];
+}
 // 検査をつなぐ（先に落ちた理由を返す）
 const allChecks = (...fs) => (text) => { for (const fn of fs) { const r = fn && fn(text); if (r && !r.ok) return r; } return { ok: true }; };
 // HP へ案内するときのリンク（2026-11-02 社長「HP案内するときはリンク付けてあげるとより丁寧 その店舗のページね」）。
@@ -237,6 +244,7 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
 
   const compose = async () => withLink(await composeBody());
   const composeBody = async () => {
+    if (site.setBadPhotos) { try { site.setBadPhotos(((await store.getConfig('badPhotos')) || {}).urls || []); } catch (e) { console.warn(`[threads] CAFE_BAD_PHOTOS_READ_FAILED ${e.message}`); } }
     const recent = (await store.recentPosts(RECENT_POSTS)).map((p) => ({ ...p, text: stripLink(p.text) }));
     // 毎日の見直しのメモと配分（無ければ今までどおり）
     let notes = '';
@@ -347,7 +355,23 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
         out.skipped.push({ index: idx, reason });
         await tell(`⚠ ${idx + 1} 本目（${hm}）は出せませんでした（${reason}）`);
       } else {
-        const r = await publish(w);
+        let r = await publish(w);
+        // Meta が写真を取りに来られなかった（sub=2207052）: その写真を二度と使わない印を付け、別の写真で 1 回だけ書き直して出す（2026-11-09 社長）
+        const bad = !r.ok && r.stage === 'container' ? badPhotoUrls(w, r.error) : [];
+        if (bad.length) {
+          try {
+            const cur = ((await store.getConfig('badPhotos')) || {}).urls || [];
+            const urls = [...new Set([...cur, ...bad])];
+            await store.setConfig('badPhotos', { urls });
+            if (site.setBadPhotos) site.setBadPhotos(urls);
+            console.warn(`[threads] CAFE_BAD_PHOTO ${bad.join(' ')} → 別の写真で書き直し`);
+            const w2 = await compose();
+            if (w2 && w2.ok) {
+              const r2 = await publish(w2);
+              if (r2.ok) { w = w2; r = r2; } else console.warn(`[threads] CAFE_BAD_PHOTO_RETRY_PUBLISH_FAILED ${r2.stage}: ${r2.error}`);
+            } else console.warn(`[threads] CAFE_BAD_PHOTO_RETRY_COMPOSE_FAILED ${w2 ? w2.reason : '生成エラー'}`);
+          } catch (e) { console.warn(`[threads] CAFE_BAD_PHOTO_RETRY_FAILED ${e.message}`); }
+        }
         if (!r.ok) {
           await store.markSkipped(dateKey, idx, `投稿失敗: ${r.error}`);
           out.skipped.push({ index: idx, reason: `投稿失敗: ${r.error}` });
