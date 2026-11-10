@@ -37,7 +37,7 @@ const LENGTH_BANDS = {
 };
 const NO_TINY_TYPES = ['quote', 'newstore', 'campaign', 'media', 'countdown', 'shop']; // 中身が要る型は「ひと言」の回にしない
 // 豆知識は話の中身（何の研究で何が分かったか）まで書くので、いつも一番長い段（2026-11-10 社長「内容はすごくいいけどちょっと短すぎ」）
-const LONG_TYPES = ['trivia'];
+const LONG_TYPES = ['trivia', 'quote']; // 偉人の名言も同じ（2026-11-10 社長「偉人も同じルールで」）
 
 // bandSet: 人物像ごとの長さ（personaCafe.LENGTH_BANDS など。無ければ既定）
 function pickLength({ photo, type, rand = Math.random, bandSet = null }) {

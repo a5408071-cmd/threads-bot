@@ -36,3 +36,9 @@ test('豆知識（trivia）はいつも一番長い段', () => {
   expect(writer.pickLength({ photo: true, type: 'trivia', rand: () => 0, bandSet: personaCafe.LENGTH_BANDS }).text).toMatch(/150〜220字/);
   expect(writer.pickLength({ photo: false, type: 'trivia', rand: () => 0, bandSet: personaCafe.LENGTH_BANDS }).text).toMatch(/120〜180字/);
 });
+
+test('偉人の名言（quote）もいつも一番長い段', () => {
+  const writer = require('../src/writer');
+  const personaCafe = require('../src/personaCafe');
+  expect(writer.pickLength({ photo: true, type: 'quote', rand: () => 0, bandSet: personaCafe.LENGTH_BANDS }).text).toMatch(/150〜220字/);
+});

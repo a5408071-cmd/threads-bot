@@ -396,11 +396,13 @@ describe('長さのくじ（2026-10-29 社長「文字数がいつも同じぐ�
     const r = await W.writePost({ type: 'aruaru', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a, rand: () => 0.1 });
     expect(r).toMatchObject({ ok: true, attempts: 2, text: ok });
   });
-  test('名言・告知は「ひと言」の回にしない（くじが小さくてもふつうの回）', async () => {
+  test('告知は「ひと言」の回にしない（くじが小さくてもふつうの回）', () => {
+    expect(W.pickLength({ photo: false, type: 'shop', rand: () => 0.1 }).text).toMatch(/90〜160字/);
+  });
+  test('名言は一番長い段（2026-11-10 社長「偉人も同じルールで」）', async () => {
     const a = fakeAnthropic([LONG]);
     await W.writePost({ type: 'quote', recent: [], dateKey: '2026-10-28', env: {}, anthropic: a, rand: () => 0.1 });
-    expect(userOf(a)).not.toMatch(/25〜60字/);
-    expect(userOf(a)).toMatch(/90〜160字/);
+    expect(userOf(a)).toMatch(/200〜320字/);
   });
 });
 
