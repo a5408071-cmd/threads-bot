@@ -29,3 +29,10 @@ describe('公式: 短く・問いかけで締めない・利用シーンを並�
     expect(String(anthropic.messages.create.mock.calls[0][0].messages[0].content)).toMatch(/60〜120字/);
   });
 });
+
+test('豆知識（trivia）はいつも一番長い段', () => {
+  const writer = require('../src/writer');
+  const personaCafe = require('../src/personaCafe');
+  expect(writer.pickLength({ photo: true, type: 'trivia', rand: () => 0, bandSet: personaCafe.LENGTH_BANDS }).text).toMatch(/150〜220字/);
+  expect(writer.pickLength({ photo: false, type: 'trivia', rand: () => 0, bandSet: personaCafe.LENGTH_BANDS }).text).toMatch(/120〜180字/);
+});
