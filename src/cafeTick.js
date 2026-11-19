@@ -71,6 +71,26 @@ function badPhotoUrls(w, error) {
   const mine = [...(w.photos || []).map((p) => p.url), ...(w.photo ? [w.photo.url] : [])].filter(Boolean);
   return [...new Set(mine.filter((u) => e.includes(u)))];
 }
+// 書き出しが毎回同じになるのを止める（2026-11-19 社長「店舗と文がいつも同じ感じで変」）。
+// 決まり文句（実際に毎回出ていたもの）と、直近の投稿と書き出しの12字が同じものは書き直し
+const STOCK_OPENING_RES = [
+  [/にまつわる豆知識/, '「〜にまつわる豆知識をひとつ」'],
+  [/豆知識をひとつ/, '「豆知識をひとつ」'],
+  [/曜日に(読みたい|思い出したい|届けたい)/, '「〇曜日に読みたい〜」'],
+  [/(読みたい|届けたい|押してくれる|くれる)、?[^。\n]{0,8}名言です/, '「〜の名言です」'],
+  [/^[^。\n]{0,15}[区市町村]の「セルフカフェ[ 　]?/, '「〇〇区の『セルフカフェ ××店』は」'],
+  [/^「セルフカフェ[ 　]?[^」]+」は、/, '「『セルフカフェ ××店』は、」'],
+];
+const openingOf = (t) => String(t || '').replace(/\s+/g, '').slice(0, 12);
+function openingCheck(recentTexts = []) {
+  const recentOpenings = new Set((recentTexts || []).map(openingOf).filter((o) => o.length >= 8));
+  return (text) => {
+    const first = String(text || '').trim().split('\n')[0] || '';
+    for (const [re, label] of STOCK_OPENING_RES) if (re.test(first)) return { ok: false, reason: `書き出しが決まり文句（${label}）。1行目から中身（意外な事実・数字・名言そのもの・その店にしかない一点）で始め、毎回ちがう形にする` };
+    if (recentOpenings.has(openingOf(text))) return { ok: false, reason: '書き出しが最近の投稿と同じ。ちがう書き出しにする' };
+    return { ok: true };
+  };
+}
 // 検査をつなぐ（先に落ちた理由を返す）
 const allChecks = (...fs) => (text) => { for (const fn of fs) { const r = fn && fn(text); if (r && !r.ok) return r; } return { ok: true }; };
 // HP へ案内するときのリンク（2026-11-02 社長「HP案内するときはリンク付けてあげるとより丁寧 その店舗のページね」）。
@@ -102,29 +122,38 @@ const GENERAL_FACTS = '今回は特定の店を紹介しない回です。店名
 // 配分（weights）は毎日の見直し（cafeLearning）が決める。無ければ今までどおり均等＋仕事・勉強 2 倍
 // 使い方・設備の回（2026-11-04 社長「使い方とか設備の説明とかの投稿もたまにはいれてね」）: 直近 GUIDE_EVERY 本に無ければ配分に関係なく次はどちらか（5 本/日なのでほぼ 1 日 1 本）
 const GUIDE_TYPES = ['howto', 'facility'];
-const GUIDE_EVERY = 4;
+const GUIDE_EVERY = 4; // guide（下）を渡さないときだけの古い決まり
+// 2026-11-19 社長「1-3すすめて」: 使い方・設備は週 1 本。直近 GUIDE_WINDOW_DAYS 日に出ていれば選ばない、出ていなければ次はどちらか
+const GUIDE_WINDOW_DAYS = 7;
+const GUIDE_LOOKBACK = 50; // 5 本/日 × 7 日を見られる数
 // 毎日 1 本ずつ必ず出す型（2026-11-09 社長「偉人はもっと頻度あげて」「勉強や集中などのうんちくや豆知識系は毎日入れ込もう」）。
 // todayTypes（今日すでに出した型）に無ければ、配分や使い方・設備の回より先に出す。直前と同じ型は続けない
 const DAILY_TYPES = ['trivia', 'quote'];
-function pickCafeType(recentTypes, rng = Math.random, weights = null, todayTypes = null) {
+function pickCafeType(recentTypes, rng = Math.random, weights = null, todayTypes = null, guide = null) {
   const recent = recentTypes || [];
+  const guideBlocked = Boolean(guide && guide.allowed === false);
   if (Array.isArray(todayTypes)) {
     const due = DAILY_TYPES.filter((d) => !todayTypes.includes(d) && recent[0] !== d);
     if (due.length) return due[Math.floor(rng() * due.length)];
   }
-  if (recent.length >= GUIDE_EVERY && !recent.slice(0, GUIDE_EVERY).some((x) => GUIDE_TYPES.includes(x))) {
+  if (guide ? guide.due : (recent.length >= GUIDE_EVERY && !recent.slice(0, GUIDE_EVERY).some((x) => GUIDE_TYPES.includes(x)))) {
     // 久しく出ていない方（直近で先に見つかる方の反対）。どちらも見当たらなければ facility
+    // 配分があれば、使い方と設備のどちらかを配分で選ぶ（毎日の見直しの判断を活かす）
+    if (weights && typeof weights === 'object') {
+      const g = GUIDE_TYPES.flatMap((x) => Array(Math.max(0, Math.round(Number(weights[x]) || 0))).fill(x));
+      if (g.length) return g[Math.floor(rng() * g.length)];
+    }
     const last = recent.find((x) => GUIDE_TYPES.includes(x));
     return last === 'facility' ? 'howto' : 'facility';
   }
-  const avoid = new Set(recent.slice(0, 2));
+  const avoid = new Set([...recent.slice(0, 2), ...(guideBlocked ? GUIDE_TYPES : [])]);
   if (weights && typeof weights === 'object') {
     const bag = (skip) => personaCafe.TYPES.filter((t) => !skip.has(t)).flatMap((t) => Array(Math.max(0, Math.round(Number(weights[t]) || 0))).fill(t));
-    const pool = bag(avoid).length ? bag(avoid) : bag(new Set());
+    const pool = bag(avoid).length ? bag(avoid) : bag(new Set(guideBlocked ? GUIDE_TYPES : []));
     if (pool.length) return pool[Math.floor(rng() * pool.length)];
   }
   let pool = personaCafe.TYPES.filter((t) => !avoid.has(t));
-  if (!pool.length) pool = personaCafe.TYPES.slice();
+  if (!pool.length) pool = personaCafe.TYPES.filter((t) => !guideBlocked || !GUIDE_TYPES.includes(t));
   pool = [...pool, ...pool.filter((t) => t === 'work' || t === 'study')]; // 仕事・勉強での使い方を 2 倍
   return pool[Math.floor(rng() * pool.length)];
 }
@@ -212,7 +241,10 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
 
   // 既存店の紹介（2026-11-02 社長「新店舗終わったら既存店も順次やろうかね そこそこ伸びそう」→「なるべく新しい順に」）: 開始日以降、告知の無い日に 1 日 2 店（下）、新しい店から一周ずつ
   // 2026-11-02 社長「本数増やす？店舗情報が溜まりすぎてる」→ 本数は 5 のまま、既存店を 1 日 2 店（2 店目は夕方以降＝1 店目と離す）。CAFE_SHOP_PER_DAY・CAFE_SHOP_SECOND_FROM で変えられる
-  const shopPerDay = () => Math.max(1, Number(env.CAFE_SHOP_PER_DAY) || 2);
+  // 2026-11-19 社長「店舗と文がいつも同じ感じで変」→ 1 日 1 店まで・前の紹介から CAFE_SHOP_GAP_DAYS 日（既定 3＝週 2 本ほど）あける
+  const shopPerDay = () => Math.max(1, Number(env.CAFE_SHOP_PER_DAY) || 1);
+  const shopGapDays = () => { const n = Number(env.CAFE_SHOP_GAP_DAYS); return Number.isFinite(n) && n >= 0 ? n : 3; };
+  const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
   const SECOND_FROM = /^\d{2}:\d{2}$/.test(env.CAFE_SHOP_SECOND_FROM || '') ? env.CAFE_SHOP_SECOND_FROM : '16:00'; // 書式違い（9:00 など）は既定に戻す
   const SHOP_GAP_MIN = 180; // 1 店目が遅い枠で出た日も 3 時間はあける
   const hmMin = (hm) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3));
@@ -228,6 +260,8 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     const done = conf.done || {};
     const n = shopCountToday(conf);
     if (!force && n >= shopPerDay()) return null;
+    const lastDay = conf.day && /^\d{4}-\d{2}-\d{2}$/.test(String(conf.day.date || '')) ? conf.day.date : null;
+    if (!force && !priority.length && lastDay && lastDay !== dateKey && daysBetween(lastDay, dateKey) < shopGapDays()) return null;
     if (!force && n >= 1 && slots.jstHm(t) < SECOND_FROM) return null;
     if (!force && n >= 1 && conf.day && conf.day.date === dateKey && conf.day.lastAt && hmMin(slots.jstHm(t)) - hmMin(conf.day.lastAt) < SHOP_GAP_MIN) return null;
     if (!force && !priority.length && Object.values(await readAnnounced()).some((v) => v.days.includes(dateKey))) return null; // 告知が出た日は既存店を出さない
@@ -242,6 +276,13 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
     await store.setConfig('shopIntro', { done: { ...done, [url]: dateKey }, day: { date: dateKey, n: shopCountToday(conf) + 1, lastAt: slots.jstHm(t) }, ...(priority.length ? { priority } : {}) });
   };
 
+  // 使い方・設備の回を出してよいか（直近 7 日に無ければ出してよく、その日の最初の機会に出す）
+  const guideState = async () => {
+    const since = t.getTime() - GUIDE_WINDOW_DAYS * 86400000;
+    const week = (await store.recentPosts(GUIDE_LOOKBACK)).filter((p) => p.postedAt && new Date(p.postedAt).getTime() >= since);
+    const posted = week.some((p) => GUIDE_TYPES.includes(p.type));
+    return { allowed: !posted, due: !posted };
+  };
   const compose = async () => withLink(await composeBody());
   const composeBody = async () => {
     if (site.setBadPhotos) { try { site.setBadPhotos(((await store.getConfig('badPhotos')) || {}).urls || []); } catch (e) { console.warn(`[threads] CAFE_BAD_PHOTOS_READ_FAILED ${e.message}`); } }
@@ -283,12 +324,17 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
       if (forceType === 'shop' && !shop) return { ok: false, reason: '紹介できる既存店が取れない', type: 'shop' };
       if (shop) {
         const facts = `今回は既存店を 1 店紹介する回です。店名・エリア・最寄駅を書いてよい。\n${factsText(shop.facts).split('\n').filter((l) => !l.startsWith('- 有料サービス')).join('\n')}\n${PAID_NOTE}`;
-        const w = await writer.writePost({ type: 'shop', recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: shop.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: allChecks(noQuestionCheck, paidCheck) });
-        return { ...w, photo: shop.photo, ...(shop.photos ? { photos: shop.photos } : {}), storeUrl: shop.url, storeName: shop.storeName, shopIntro: { url: shop.url, cycleDone: Boolean(shop.cycleDone) } };
+        const w = await writer.writePost({ type: 'shop', recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: shop.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: allChecks(noQuestionCheck, paidCheck, openingCheck(recent.map((p) => p.text))) });
+        // 書けなかったら（書き出しの検査などで3回とも落ちた）、その枠はふだんの回で出す。紹介済みにしないので、その店は次の機会にまた選ばれる（2026-11-19 レビュー指摘）
+        if (w.ok || forceType === 'shop') return { ...w, photo: shop.photo, ...(shop.photos ? { photos: shop.photos } : {}), storeUrl: shop.url, storeName: shop.storeName, shopIntro: { url: shop.url, cycleDone: Boolean(shop.cycleDone) } };
+        console.warn(`[threads] CAFE_SHOP_FALLBACK store=${shop.storeName} reason=${w.reason}`);
       }
     }
     const todayTypes = recent.filter((p) => p.postedAt && slots.jstDateKey(new Date(p.postedAt)) === dateKey).map((p) => p.type);
-    const type = forceType || pickCafeType(recent.map((p) => p.type), Math.random, weights, todayTypes);
+    // 使い方・設備の回は週 1 本（2026-11-19 社長。平均の表示が約 20 で一番少なかった）: 直近 7 日の投稿を見て決める
+    let guide = { allowed: true, due: false };
+    try { guide = await guideState(); } catch (e) { console.warn(`[threads] CAFE_GUIDE_STATE_FAILED ${e.message}`); }
+    const type = forceType || pickCafeType(recent.map((p) => p.type), Math.random, weights, todayTypes, guide);
     const picked = await site.pickPhoto({ recentUrls: recent.map((p) => p.storeUrl).filter(Boolean) });
     const writeGeneral = async (ty) => {
       let facts = GENERAL_FACTS;
@@ -297,13 +343,13 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
         const used = ((await store.getConfig('quotes')) || {}).used || [];
         facts += `\n名言は日本・海外の偉人、経営者・科学者・発明家・作家・スポーツ選手など幅広く選ぶ（孔子・老子のような定番ばかりにしない）。${used.length ? `\nこれまでに使った名言（同じ言葉は使わない。同じ人も直近 10 個に入っていれば避ける）:\n${used.slice(-QUOTES_IN_PROMPT).map((q) => `- ${q}`).join('\n')}` : ''}`;
       }
-      return writer.writePost({ type: ty, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: allChecks(noQuestionCheck, ty === 'quote' ? quoteCheck : noStoreCheck) });
+      return writer.writePost({ type: ty, recent: recent.map((p) => p.text), dateKey, env, anthropic, photo: picked.photo, persona: personaCafe, facts: withNotes(facts), banned: CAFE_BANNED, check: allChecks(noQuestionCheck, ty === 'quote' ? quoteCheck : noStoreCheck, openingCheck(recent.map((p) => p.text))) });
     };
     let w = await writeGeneral(type);
     // 毎日枠（豆知識・名言）が書けなかったら、その枠は別の型で出す（失敗し続けて 1 日の枠が全部消えるのを防ぐ。レビュー指摘）
     if (!w.ok && !forceType && DAILY_TYPES.includes(type)) {
       let alt = null;
-      for (let k = 0; k < 5 && (!alt || DAILY_TYPES.includes(alt)); k++) alt = pickCafeType(recent.map((p) => p.type), Math.random, weights);
+      for (let k = 0; k < 5 && (!alt || DAILY_TYPES.includes(alt)); k++) alt = pickCafeType(recent.map((p) => p.type), Math.random, weights, null, guide);
       if (DAILY_TYPES.includes(alt)) alt = 'work';
       console.warn(`[threads] CAFE_DAILY_FALLBACK type=${type} reason=${w.reason} alt=${alt}`);
       w = await writeGeneral(alt);
@@ -419,4 +465,4 @@ async function runCafeTick({ env = process.env, store, threads, writer, notify, 
   return out;
 }
 
-module.exports = { noQuestionCheck, examTagFix, DAILY_TYPES, runCafeTick, pickCafeType, noStoreCheck, quoteCheck, paidCheck, CAFE_WINDOWS, LABEL, CAFE_BANNED };
+module.exports = { openingCheck, GUIDE_TYPES, noQuestionCheck, examTagFix, DAILY_TYPES, runCafeTick, pickCafeType, noStoreCheck, quoteCheck, paidCheck, CAFE_WINDOWS, LABEL, CAFE_BANNED };

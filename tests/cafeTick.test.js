@@ -479,14 +479,16 @@ describe('既存店の紹介（2026-11-02 社長「新店舗終わったら既�
     expect(d.site.nextShop.mock.calls[0][0]).toMatchObject({ today: '2026-11-08' });
   });
 
-  test('1 日 2 店: 2 店目は 16:00 より前ならふだんの回、16:00 以降なら既存店', async () => {
+  test('1 日 2 店（CAFE_SHOP_PER_DAY=2 のとき）: 2 店目は 16:00 より前ならふだんの回、16:00 以降なら既存店', async () => {
     const OTHER = 'https://selfcafe.jp/shop/aichi/other/';
     const d = mkShop();
+    d.env.CAFE_SHOP_PER_DAY = '2';
     await d.store.setToken(TOKEN);
     await d.store.setConfig('shopIntro', { done: { [OTHER]: '2026-11-08' }, day: { date: '2026-11-08', n: 1 } });
     await runCafeTick(d);
     expect(d.writer.writePost.mock.calls[0][0].type).not.toBe('shop');
     const e = mkShop({ hm: '18:50' });
+    e.env.CAFE_SHOP_PER_DAY = '2';
     await e.store.setToken(TOKEN);
     await e.store.setConfig('shopIntro', { done: { [OTHER]: '2026-11-08' }, day: { date: '2026-11-08', n: 1 } });
     await runCafeTick(e);
@@ -502,6 +504,7 @@ describe('既存店の紹介（2026-11-02 社長「新店舗終わったら既�
     expect(d.writer.writePost.mock.calls[0][0].type).not.toBe('shop');
     const e = mkShop({ hm: '18:50' });
     e.env.CAFE_SHOP_SECOND_FROM = '9:00';
+    e.env.CAFE_SHOP_PER_DAY = '2';
     await e.store.setToken(TOKEN);
     await e.store.setConfig('shopIntro', { done: { a: '2026-11-08' } });
     await runCafeTick(e);
@@ -524,11 +527,37 @@ describe('既存店の紹介（2026-11-02 社長「新店舗終わったら既�
 
   test('一周のリセットが 1 店目で起きても、その日の 2 店目は数えたまま', async () => {
     const d = mkShop({ hm: '18:50' });
+    d.env.CAFE_SHOP_PER_DAY = '2';
     d.site.nextShop = jest.fn(async () => ({ ...SHOP, cycleDone: true }));
     await d.store.setToken(TOKEN);
     await d.store.setConfig('shopIntro', { done: { a: '2026-11-08' }, day: { date: '2026-11-08', n: 1 } });
     await runCafeTick(d);
     expect((await d.store.getConfig('shopIntro'))).toEqual({ done: { [SHOP.url]: '2026-11-08' }, day: { date: '2026-11-08', n: 2, lastAt: '18:50' } });
+  });
+
+  // 2026-11-19 社長「店舗と文がいつも同じ感じで変」: 既定は 1 日 1 店・前の紹介から 3 日あける（週 2 本ほど）
+  test('既定は 1 日 1 店。前の紹介から 3 日たっていなければ出さない（CAFE_SHOP_GAP_DAYS で変えられる）', async () => {
+    const d = mkShop({ hm: '18:50' });
+    await d.store.setToken(TOKEN);
+    await d.store.setConfig('shopIntro', { done: { a: '2026-11-08' }, day: { date: '2026-11-08', n: 1 } });
+    await runCafeTick(d);
+    expect(d.writer.writePost.mock.calls[0][0].type).not.toBe('shop');
+    const e = mkShop();
+    await e.store.setToken(TOKEN);
+    await e.store.setConfig('shopIntro', { done: { a: '2026-11-06' }, day: { date: '2026-11-06', n: 1 } });
+    await runCafeTick(e);
+    expect(e.writer.writePost.mock.calls[0][0].type).not.toBe('shop');
+    const f = mkShop();
+    await f.store.setToken(TOKEN);
+    await f.store.setConfig('shopIntro', { done: { a: '2026-11-05' }, day: { date: '2026-11-05', n: 1 } });
+    await runCafeTick(f);
+    expect(f.writer.writePost.mock.calls[0][0].type).toBe('shop');
+    const g = mkShop();
+    g.env.CAFE_SHOP_GAP_DAYS = '1';
+    await g.store.setToken(TOKEN);
+    await g.store.setConfig('shopIntro', { done: { a: '2026-11-07' }, day: { date: '2026-11-07', n: 1 } });
+    await runCafeTick(g);
+    expect(g.writer.writePost.mock.calls[0][0].type).toBe('shop');
   });
 
   test('11/7 以前は出さない（CAFE_SHOP_INTRO_FROM で変えられる）。CAFE_SHOP_INTRO=false で止まる', async () => {
