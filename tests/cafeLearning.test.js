@@ -25,7 +25,7 @@ describe('公式の毎日の見直し（2026-11-02 社長「伸ばす投稿を�
     const prompt = anthropic.messages.create.mock.calls[0][0].messages[0].content;
     expect(prompt).toMatch(/テレワーク/);
     expect(prompt).toMatch(/店名・駅名.*書かない|URL/); // 変えてはいけない決まりを伝える
-    expect(await l.weightsFor()).toMatchObject({ work: 4, study: 2, quote: 0 });
+    expect(await l.weightsFor()).toMatchObject({ work: 4, study: 3, quote: 4 }); // 2026-11-20 見られる型に下限（勉強 3・名言 4）
     const notes = await l.notesText();
     expect(notes).not.toMatch(/問いかけ/); // 問いかけ系のメモは投稿の指示に渡さない（2026-11-09 社長「毎回質問系で終わるのがうざい」）
     expect(notes).toMatch(/市区の名前/);
@@ -62,7 +62,7 @@ describe('公式の毎日の見直し（2026-11-02 社長「伸ばす投稿を�
     await l.daily();
     const w = await l.weightsFor();
     expect(w.work).toBe(5);
-    expect(w.study).toBe(0);
+    expect(w.study).toBe(3); // 0 に丸めたあと、下限 3（2026-11-20）
     expect(w).not.toHaveProperty('golf');
     expect((await l.notesText()).match(/^- /gm)).toHaveLength(5);
     const z = await mk({ answer: { weights: { work: 0 }, notes: [], report: '' } });
@@ -79,10 +79,16 @@ describe('公式の毎日の見直し（2026-11-02 社長「伸ばす投稿を�
     expect((await bad.weightsFor()).work).toBe(3);
   });
 
-  test('メモが無ければ notesText は空、配分が無ければ weightsFor は null', async () => {
+  test('メモが無ければ notesText は空、配分が無くても見られる型に寄せた既定の配分（2026-11-20 社長「拡散性」）', async () => {
     const store = memoryStore({ now: () => NOW, prefix: 'threads_cafe_' });
     const l = createCafeLearning({ store, anthropic: null, notify: null, env: {}, now: () => NOW });
     expect(await l.notesText()).toBe('');
-    expect(await l.weightsFor()).toBeNull();
+    expect(await l.weightsFor()).toMatchObject({ quote: 4, trivia: 4, koyomi: 3, study: 3, howto: 1, facility: 1, membership: 1, work: 2 });
+  });
+
+  test('AI が使い方・設備・サブスクを多くしても 1 まで、名言・豆知識を 0 にしても 4 は残す', async () => {
+    const { l } = await mk({ answer: { weights: { howto: 5, facility: 5, membership: 5, quote: 0, trivia: 0 }, notes: [], report: '' } });
+    await l.daily();
+    expect(await l.weightsFor()).toMatchObject({ howto: 1, facility: 1, membership: 1, quote: 4, trivia: 4 });
   });
 });

@@ -22,7 +22,7 @@ describe('公式: 豆知識・名言を毎日／資格タグは試験の回だ�
   });
   test('資格・試験のタグは countdown 以外なら型の既定へ', () => {
     expect(examTagFix({ ok: true, type: 'study', tag: '資格勉強' }).tag).toBe('勉強カフェ');
-    expect(examTagFix({ ok: true, type: 'tips', tag: '簿記' }).tag).toBe('勉強カフェ');
+    expect(examTagFix({ ok: true, type: 'tips', tag: '簿記' }).tag).toBe('習慣化'); // 2026-11-20 tips の既定タグを習慣化に
     expect(examTagFix({ ok: true, type: 'countdown', tag: '資格勉強' }).tag).toBe('資格勉強');
     expect(examTagFix({ ok: true, type: 'trivia', tag: '集中力' }).tag).toBe('集中力');
     expect(examTagFix({ ok: true, type: 'trivia', tag: '簿記3級' }).tag).toBe('豆知識'); // 表記ゆれ

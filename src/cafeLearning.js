@@ -31,6 +31,21 @@ function summarize(posts, metrics) {
   return lines.join('\n');
 }
 
+// 2026-11-20 社長「拡散性」→ 見られている型に寄せる。10/29〜11/19 の表示の中央値: 暦 467・勉強 202・豆知識 120・名言 120・仕事 89・
+//   店 63・サブスク 42・使い方 29・設備 23。毎日の見直し（AI）の配分にこの下限と上限を掛ける
+const WEIGHT_FLOOR = { quote: 4, trivia: 4, koyomi: 3, study: 3, tips: 2 };
+const WEIGHT_CAP = { membership: 1, howto: 1, facility: 1, season: 2 };
+function applyFloorsAndCaps(given) {
+  const w = {};
+  for (const t of personaCafe.TYPES) {
+    let v = t in (given || {}) ? Math.max(0, Math.round(Number(given[t]) || 0)) : 2;
+    if (t in WEIGHT_FLOOR) v = Math.max(v, WEIGHT_FLOOR[t]);
+    if (t in WEIGHT_CAP) v = Math.min(v, WEIGHT_CAP[t]);
+    w[t] = v;
+  }
+  return w;
+}
+
 function createCafeLearning({ store, anthropic, notify, env = process.env, now = () => new Date() }) {
   async function strategy() {
     try { return (await store.getConfig('strategy')) || null; } catch (e) { console.warn(`[threads] CAFE_STRATEGY_READ_FAILED ${e.message}`); return null; }
@@ -38,10 +53,9 @@ function createCafeLearning({ store, anthropic, notify, env = process.env, now =
 
   async function weightsFor() {
     const s = await strategy();
-    if (!s || !s.weights || typeof s.weights !== 'object') return null;
     const w = {};
-    for (const t of personaCafe.TYPES) if (t in s.weights) w[t] = s.weights[t];
-    return Object.values(w).some((v) => v > 0) ? w : null;
+    if (s && s.weights && typeof s.weights === 'object') for (const t of personaCafe.TYPES) if (t in s.weights) w[t] = s.weights[t];
+    return applyFloorsAndCaps(w);
   }
 
   async function notesText() {
@@ -102,7 +116,7 @@ function createCafeLearning({ store, anthropic, notify, env = process.env, now =
       const latest = metrics.length ? metrics[metrics.length - 1].followers : null;
       const old = metrics.find((m) => new Date(m.date).getTime() <= since) || metrics[0];
       const delta = latest != null && old && old !== metrics[metrics.length - 1] ? latest - old.followers : null;
-      const order = Object.entries(weights).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}:${v}`).join(' ');
+      const order = Object.entries(applyFloorsAndCaps(weights)).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}:${v}`).join(' ');
       const msg = [
         `${LABEL}📈 Threads 週次（${jstDateKey(t)}）フォロワー ${latest ?? '不明'} 人${delta == null ? '' : `（7日で ${delta >= 0 ? '+' : ''}${delta}）`}`,
         String(parsed.report || ''),

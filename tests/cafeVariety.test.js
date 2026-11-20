@@ -47,6 +47,20 @@ describe('使い方・設備の回は週1本', () => {
   });
 });
 
+test('あいさつで書き出さない（2026-11-20 社長「拡散性」）', () => {
+  const check = openingCheck([]);
+  expect(check('おはようございます☀️ 今日も一日…').ok).toBe(false);
+  expect(check('みなさん、集中が続かない日ってありますよね').ok).toBe(false);
+  expect(check('巣鴨のみなさん、駅から1分の場所に…').ok).toBe(true);
+});
+
+test('出す時間は朝・昼・午後・夕方（夜はやめた）。窓どうしは 90 分あける', () => {
+  const { CAFE_WINDOWS } = require('../src/cafeTick');
+  expect(CAFE_WINDOWS).toHaveLength(5);
+  expect(Math.max(...CAFE_WINDOWS.map((w) => w.to))).toBeLessThanOrEqual(18 * 60);
+  for (let i = 1; i < CAFE_WINDOWS.length; i++) expect(CAFE_WINDOWS[i].from - CAFE_WINDOWS[i - 1].to).toBeGreaterThanOrEqual(90);
+});
+
 test('店名の書き出しはスペースが無くても・全角でも止める（レビュー指摘）', () => {
   const check = openingCheck([]);
   expect(check('「セルフカフェ鳴海山下店」は、28席のお店です。').ok).toBe(false);
