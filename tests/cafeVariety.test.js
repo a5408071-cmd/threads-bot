@@ -47,6 +47,13 @@ describe('使い方・設備の回は週1本', () => {
   });
 });
 
+test('本文に AI の注意書きが混ざったら書き直し（2026-11-20 試し書きで実際に出た）', () => {
+  const { noQuestionCheck } = require('../src/cafeTick');
+  const bad = 'アインシュタインが息子への手紙に書いたひと言\n「人生は自転車に…」\n来週の最初のひとこぎだけ決めておきましょう🚲\n\n---\n※投稿前に確認をお願いします：検索の回数が上限に達したため、出典を確かめられませんでした。';
+  expect(noQuestionCheck(bad).ok).toBe(false);
+  expect(noQuestionCheck('やる気は、始めたあとに出てきます。\n最初は1ページだけ。').ok).toBe(true);
+});
+
 test('あいさつで書き出さない（2026-11-20 社長「拡散性」）', () => {
   const check = openingCheck([]);
   expect(check('おはようございます☀️ 今日も一日…').ok).toBe(false);

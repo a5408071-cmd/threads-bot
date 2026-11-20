@@ -56,8 +56,11 @@ function paidCheck(text) {
 }
 // 問いかけで締めない（2026-11-09 社長「毎回質問系で終わるのがうざい」）。プロンプトだけに頼らず、最後の文が ？ で終わる案は書き直し
 const QUESTION_END_RE = /[？?][\s」』）)！!〜~…\p{Extended_Pictographic}️]*$/u;
+// 本文に AI の注意書き（「※投稿前に確認を」「検索の上限に達した」など）が混ざったら書き直し（2026-11-20 試し書きの名言の回で実際に出た。そのまま公開されるところだった）
+const META_NOTE_RE = /投稿前に|確認をお願いします|確かめられませんでした|確認できませんでした|検索の(回数|上限)|差し替えます|^\s*-{3,}\s*$/m;
 function noQuestionCheck(text) {
-  const last = String(text || '').trim().split('\n').map((l) => l.trim()).filter(Boolean).pop() || '';
+  if (META_NOTE_RE.test(String(text || ''))) return { ok: false, reason: '本文に注意書き・確認のお願いが混ざっている。投稿する本文だけを書く。名言の出典が確かめられないなら、確かめられる別の名言にする' };
+  const last =String(text || '').trim().split('\n').map((l) => l.trim()).filter(Boolean).pop() || '';
   return QUESTION_END_RE.test(last) ? { ok: false, reason: '最後が問いかけ（？）で終わっている。質問で締めず、言い切りで終える' } : { ok: true };
 }
 // 資格・試験のタグは試験の情報を載せた回（countdown）だけ（2026-11-09 社長）。他の型で付いたら型の既定のタグへ
